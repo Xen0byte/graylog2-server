@@ -15,56 +15,70 @@
  * <http://www.mongodb.com/licensing/server-side-public-license>.
  */
 import React, { useEffect, useState } from 'react';
-import PropTypes from 'prop-types';
-import { Form, Formik } from 'formik';
+import { Formik } from 'formik';
 import styled, { css } from 'styled-components';
 
-import { FormSubmit, Select } from 'components/common';
-import { Col, Row } from 'components/bootstrap';
+import { FormSubmit, Icon, OverlayTrigger, Select, NestedForm } from 'components/common';
+import { Button, Col, Row } from 'components/bootstrap';
 import RuleBlockFormField from 'components/rules/rule-builder/RuleBlockFormField';
-import { getBasePathname } from 'util/URLUtils';
+import { getPathnameWithoutId } from 'util/URLUtils';
 import useLocation from 'routing/useLocation';
 import useSendTelemetry from 'logic/telemetry/useSendTelemetry';
+import { TELEMETRY_EVENT_TYPE } from 'logic/telemetry/Constants';
 
 import Errors from './Errors';
-import { paramValueIsVariable } from './helpers';
-import { ruleBlockPropType, blockDictPropType, RuleBuilderTypes } from './types';
-import type { BlockType, RuleBlock, BlockDict, BlockFieldDict } from './types';
+import { RuleBuilderTypes } from './types';
+import type { BlockType, RuleBlock, BlockDict, BlockFieldDict, OutputVariables } from './types';
+
+import RuleHelperTable from '../rule-helper/RulerHelperTable';
+
+type Option = { label: string, value: any, description?: string | null };
 
 type Props = {
   existingBlock?: RuleBlock,
-  onAdd: (values: {[key: string]: any}) => void,
+  onAdd: (values: { [key: string]: any }) => void,
   onCancel: () => void,
   onSelect: (option: string) => void,
-  onUpdate: (values: {[key: string]: any}, functionName: string) => void,
-  previousOutputPresent: boolean,
-  options: Array<{ label: string, value: any }>,
+  onUpdate: (values: { [key: string]: any }, functionName: string) => void,
+  options: Array<Option>,
   order: number,
+  outputVariableList?: OutputVariables,
   selectedBlockDict?: BlockDict,
   type: BlockType,
 }
-
-const FormTitle = styled.h3(({ theme }) => css`
-  margin-bottom: ${theme.spacings.sm};
-`);
-
-const BlockTitle = styled.h3(({ theme }) => css`
-  margin-bottom: ${theme.spacings.xs};
-`);
 
 const BlockDescription = styled.p(({ theme }) => css`
   color: ${theme.colors.gray[50]};
 `);
 
 const SelectedBlock = styled.div(({ theme }) => css`
-  border-left: 1px solid ${theme.colors.input.border};
-  border-right: 1px solid ${theme.colors.input.border};
-  border-bottom: 1px solid ${theme.colors.input.border};
+  border-left: 1px solid ${theme.colors.gray['90']};
+  border-right: 1px solid ${theme.colors.gray['90']};
+  border-bottom: 1px solid ${theme.colors.gray['90']};
+  border-radius: 0 0 10px 10px;
   padding: ${theme.spacings.md};
 `);
 
 const SelectedBlockInfo = styled(Row)(({ theme }) => css`
   margin-bottom: ${theme.spacings.md};
+`);
+
+const OptionTitle = styled.p(({ theme }) => css`
+  margin-bottom: ${theme.spacings.xxs};
+`);
+
+const SelectRow = styled(Row)(({ theme }) => css`
+  margin-top: ${theme.spacings.xxs};
+  margin-bottom: ${theme.spacings.xxs};
+`);
+
+const OptionDescription = styled.p<{ $isSelected: boolean }>(({ theme, $isSelected }) => css`
+  color: ${$isSelected ? theme.colors.gray[90] : theme.colors.gray[50]};
+  margin-bottom: ${theme.spacings.xxs};
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
 `);
 
 const RuleBlockForm = ({
@@ -75,7 +89,7 @@ const RuleBlockForm = ({
   onUpdate,
   options,
   order,
-  previousOutputPresent,
+  outputVariableList,
   selectedBlockDict,
   type,
 }: Props) => {
@@ -91,31 +105,30 @@ const RuleBlockForm = ({
       selectedBlockDict.params.forEach((param: BlockFieldDict) => {
         const initialBlockValue = existingBlock?.function === selectedBlockDict.name ? existingBlock?.params[param.name] : undefined;
 
-        if (!initialBlockValue) {
-          if (param.type === RuleBuilderTypes.Boolean && !initialBlockValue) {
-            newInitialValues[param.name] = false;
-          } else {
-            newInitialValues[param.name] = undefined;
-          }
-        } else if (paramValueIsVariable(initialBlockValue)) {
-          newInitialValues[param.name] = undefined;
-        } else {
+        if (
+          initialBlockValue
+          || ((param.type === RuleBuilderTypes.Boolean) && (typeof initialBlockValue === 'boolean'))
+        ) {
           newInitialValues[param.name] = initialBlockValue;
+        } else {
+          newInitialValues[param.name] = param.default_value;
         }
-      },
-      );
+      });
     }
 
     setInitialValues(newInitialValues);
   }, [selectedBlockDict, existingBlock]);
 
   const handleChange = (option: string, resetForm: () => void) => {
-    sendTelemetry('select', {
-      app_pathname: getBasePathname(pathname),
-      app_section: 'pipeline-rule-builder',
-      app_action_value: `select-${type}`,
-      event_details: { option },
-    });
+    sendTelemetry(
+      type === 'condition'
+        ? TELEMETRY_EVENT_TYPE.PIPELINE_RULE_BUILDER.NEW_CONDITION_SELECTED
+        : TELEMETRY_EVENT_TYPE.PIPELINE_RULE_BUILDER.NEW_ACTION_SELECTED, {
+        app_pathname: getPathnameWithoutId(pathname),
+        app_section: 'pipeline-rule-builder',
+        app_action_value: `select-${type}`,
+        event_details: { option },
+      });
 
     resetForm();
     onSelect(option);
@@ -125,98 +138,114 @@ const RuleBlockForm = ({
     setFieldValue(fieldName, null);
   };
 
-  const handleSubmit = (values: {[key: string]: any}) => {
-    sendTelemetry('click', {
-      app_pathname: getBasePathname(pathname),
-      app_section: 'pipeline-rule-builder',
-      app_action_value: `${existingBlock ? 'update' : 'add'}-${type}-button`,
-    });
-
+  const onSubmit = (values: { [key: string]: any }) => {
     if (existingBlock) {
+      sendTelemetry(
+        type === 'condition'
+          ? TELEMETRY_EVENT_TYPE.PIPELINE_RULE_BUILDER.UPDATE_CONDITION_CLICKED
+          : TELEMETRY_EVENT_TYPE.PIPELINE_RULE_BUILDER.UPDATE_ACTION_CLICKED, {
+          app_pathname: getPathnameWithoutId(pathname),
+          app_section: 'pipeline-rule-builder',
+          app_action_value: `update-${type}-button`,
+        });
+
       onUpdate(values, selectedBlockDict?.name);
     } else {
+      sendTelemetry(
+        type === 'condition'
+          ? TELEMETRY_EVENT_TYPE.PIPELINE_RULE_BUILDER.ADD_CONDITION_CLICKED
+          : TELEMETRY_EVENT_TYPE.PIPELINE_RULE_BUILDER.ADD_ACTION_CLICKED, {
+          app_pathname: getPathnameWithoutId(pathname),
+          app_section: 'pipeline-rule-builder',
+          app_action_value: `add-${type}-button`,
+        });
+
       onAdd(values);
     }
   };
 
+  const optionRenderer = (option: Option, isSelected: boolean) => (
+    <>
+      <OptionTitle>{option.label}</OptionTitle>
+      {option.description && (<OptionDescription $isSelected={isSelected}>{option.description}</OptionDescription>)}
+    </>
+  );
+
   return (
     <Row>
       <Col md={12}>
-        <FormTitle>{existingBlock ? `Edit ${type}` : `Add ${type}`}</FormTitle>
-        <Formik enableReinitialize onSubmit={handleSubmit} initialValues={initialValues}>
-          {({ resetForm, setFieldValue }) => (
-            <Form>
-              <Row>
+        <Formik enableReinitialize onSubmit={onSubmit} initialValues={initialValues}>
+          {({ resetForm, setFieldValue, isValid }) => (
+            <NestedForm>
+              <SelectRow>
                 <Col md={12}>
-                  <Select id="existingBlock-select"
-                          name="existingBlock-select"
-                          placeholder={`Select ${type}`}
+                  <Select id={`existingBlock-select-${type}`}
+                          name={`existingBlock-select-${type}`}
+                          placeholder={`Add ${type}`}
                           options={options}
+                          optionRenderer={optionRenderer}
                           clearable={false}
                           matchProp="label"
+                          autoFocus
                           onChange={(option: string) => handleChange(option, resetForm)}
                           value={selectedBlockDict?.name || ''} />
                 </Col>
-              </Row>
+              </SelectRow>
 
               {selectedBlockDict && (
                 <SelectedBlock>
                   <SelectedBlockInfo>
                     <Col md={12}>
-                      <BlockTitle>
-                        {existingBlock?.step_title || selectedBlockDict.name}
-                      </BlockTitle>
+                      <h5>
+                        {existingBlock?.step_title || selectedBlockDict.rule_builder_name}
+                        <OverlayTrigger trigger="click"
+                                        rootClose
+                                        placement="right"
+                                        title="Function Syntax Help"
+                                        width={700}
+                                        overlay={<RuleHelperTable entries={[selectedBlockDict]} expanded={{ [selectedBlockDict.name]: true }} />}>
+                          <Button bsStyle="link">
+                            <Icon name="help"
+                                  title="Function Syntax Help"
+                                  data-testid="funcSyntaxHelpIcon" />
+                          </Button>
+                        </OverlayTrigger>
+                      </h5>
                       <BlockDescription>{selectedBlockDict.description}</BlockDescription>
                     </Col>
                   </SelectedBlockInfo>
 
                   {selectedBlockDict.params.map((param) => (
-                    <Row key={`${order}_${param}`}>
+                    <Row key={`${order}_${param.name}`}>
                       <RuleBlockFormField param={param}
                                           functionName={selectedBlockDict.name}
                                           order={order}
-                                          previousOutputPresent={previousOutputPresent}
+                                          blockId={existingBlock?.id}
+                                          outputVariableList={outputVariableList}
+                                          blockType={type}
                                           resetField={(fieldName) => resetField(fieldName, setFieldValue)} />
                     </Row>
                   ),
                   )}
 
+                  <Errors objectWithErrors={existingBlock} />
                   <FormSubmit bsSize="small"
-                              submitButtonText={`${existingBlock ? 'Update' : 'Add'}`}
-                              onCancel={() => { resetForm(); onCancel(); }} />
+                              disabledSubmit={!isValid}
+                              submitButtonText={existingBlock ? 'Update' : 'Add'}
+                              submitButtonType="submit"
+                              onCancel={() => {
+                                resetForm();
+                                onCancel();
+                              }} />
 
                 </SelectedBlock>
               )}
-            </Form>
+            </NestedForm>
           )}
         </Formik>
-        <Errors objectWithErrors={existingBlock} />
       </Col>
     </Row>
   );
-};
-
-RuleBlockForm.propTypes = {
-  existingBlock: ruleBlockPropType,
-  onAdd: PropTypes.func.isRequired,
-  onCancel: PropTypes.func.isRequired,
-  onSelect: PropTypes.func.isRequired,
-  onUpdate: PropTypes.func.isRequired,
-  options: PropTypes.arrayOf(
-    PropTypes.shape({
-      label: PropTypes.string,
-      value: PropTypes.any,
-    }),
-  ).isRequired,
-  order: PropTypes.number.isRequired,
-  previousOutputPresent: PropTypes.bool.isRequired,
-  selectedBlockDict: blockDictPropType,
-  type: PropTypes.oneOf(['action', 'condition']).isRequired,
-};
-
-RuleBlockForm.defaultProps = {
-  existingBlock: undefined,
-  selectedBlockDict: undefined,
 };
 
 export default RuleBlockForm;

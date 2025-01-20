@@ -19,6 +19,7 @@ package org.graylog.events.processor;
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.google.auto.value.AutoValue;
@@ -51,6 +52,7 @@ import org.mongojack.ObjectId;
 import javax.annotation.Nullable;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @AutoValue
@@ -60,9 +62,12 @@ import java.util.stream.Collectors;
 public abstract class EventDefinitionDto extends ScopedEntity implements EventDefinition, ContentPackable<EventDefinitionEntity> {
     public static final String FIELD_TITLE = "title";
     public static final String FIELD_DESCRIPTION = "description";
+    public static final String FIELD_REMEDIATION_STEPS = "remediation_steps";
+    public static final String FIELD_EVENT_PROCEDURE = "event_procedure";
     public static final String FIELD_NOTIFICATIONS = "notifications";
     public static final String FIELD_STATE = "state";
-    public static final String UPDATED_AT = "updated_at";
+    public static final String FIELD_UPDATED_AT = "updated_at";
+    public static final String FIELD_MATCHED_AT = "matched_at";
     private static final String FIELD_PRIORITY = "priority";
     private static final String FIELD_ALERT = "alert";
     public static final String FIELD_CONFIG = "config";
@@ -89,8 +94,19 @@ public abstract class EventDefinitionDto extends ScopedEntity implements EventDe
 
     @Override
     @Nullable
-    @JsonProperty(UPDATED_AT)
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @JsonProperty(FIELD_REMEDIATION_STEPS)
+    public abstract String remediationSteps();
+
+    @Override
+    @Nullable
+    @JsonProperty(FIELD_UPDATED_AT)
     public abstract DateTime updatedAt();
+
+    @Override
+    @Nullable
+    @JsonProperty(FIELD_MATCHED_AT)
+    public abstract DateTime matchedAt();
 
     @Override
     @JsonProperty(FIELD_PRIORITY)
@@ -132,6 +148,12 @@ public abstract class EventDefinitionDto extends ScopedEntity implements EventDe
     @JsonProperty(FIELD_STATE)
     public abstract EventDefinition.State state();
 
+    @Override
+    @Nullable
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    @JsonProperty(FIELD_EVENT_PROCEDURE)
+    public abstract String eventProcedureId();
+
     public static Builder builder() {
         return Builder.create();
     }
@@ -139,7 +161,8 @@ public abstract class EventDefinitionDto extends ScopedEntity implements EventDe
     public abstract Builder toBuilder();
 
     @JsonIgnore
-    public ValidationResult validate() {
+    public ValidationResult validate(@Nullable EventDefinitionDto oldEventDefinitionDto,
+                                     EventDefinitionConfiguration eventDefinitionConfiguration) {
         final ValidationResult validation = new ValidationResult();
 
         if (title().isEmpty()) {
@@ -148,6 +171,9 @@ public abstract class EventDefinitionDto extends ScopedEntity implements EventDe
 
         try {
             validation.addAll(config().validate());
+            validation.addAll(config().validate(
+                    Optional.ofNullable(oldEventDefinitionDto).map(EventDefinitionDto::config).orElse(null),
+                    eventDefinitionConfiguration));
         } catch (UnsupportedOperationException e) {
             validation.addError(FIELD_CONFIG, "Event Definition config type cannot be empty.");
         }
@@ -156,7 +182,8 @@ public abstract class EventDefinitionDto extends ScopedEntity implements EventDe
             final String fieldName = fieldSpecEntry.getKey();
             if (!Message.validKey(fieldName)) {
                 validation.addError(FIELD_FIELD_SPEC,
-                    "Event Definition field_spec contains invalid message field \"" + fieldName + "\"");
+                        "Event Definition field_spec contains invalid message field \"" + fieldName + "\"." +
+                                " Valid message field characters are: a-z, A-Z, 0-9, ., -, and @. No spaces are allowed.");
             }
         }
 
@@ -168,7 +195,7 @@ public abstract class EventDefinitionDto extends ScopedEntity implements EventDe
     }
 
     @AutoValue.Builder
-    public static abstract class Builder extends ScopedEntity.AbstractBuilder<Builder>  {
+    public static abstract class Builder extends ScopedEntity.AbstractBuilder<Builder> {
         @JsonCreator
         public static Builder create() {
             return new AutoValue_EventDefinitionDto.Builder()
@@ -190,8 +217,14 @@ public abstract class EventDefinitionDto extends ScopedEntity implements EventDe
         @JsonProperty(FIELD_DESCRIPTION)
         public abstract Builder description(String description);
 
-        @JsonProperty(UPDATED_AT)
+        @JsonProperty(FIELD_REMEDIATION_STEPS)
+        public abstract Builder remediationSteps(String remediationSteps);
+
+        @JsonProperty(FIELD_UPDATED_AT)
         public abstract Builder updatedAt(DateTime updatedAt);
+
+        @JsonProperty(FIELD_MATCHED_AT)
+        public abstract Builder matchedAt(DateTime matchedAt);
 
         @JsonProperty(FIELD_PRIORITY)
         public abstract Builder priority(int priority);
@@ -222,6 +255,9 @@ public abstract class EventDefinitionDto extends ScopedEntity implements EventDe
 
         @JsonProperty(value = FIELD_SCHEDULERCTX, access = JsonProperty.Access.READ_ONLY)
         public abstract Builder schedulerCtx(EventDefinitionContextService.SchedulerCtx schedulerCtx);
+
+        @JsonProperty(FIELD_EVENT_PROCEDURE)
+        public abstract Builder eventProcedureId(String eventProcedureId);
 
         abstract EventDefinitionDto autoBuild();
 
@@ -260,11 +296,18 @@ public abstract class EventDefinitionDto extends ScopedEntity implements EventDe
                         .map(notification -> notification.toContentPackEntity(entityDescriptorIds))
                         .collect(Collectors.toList()));
 
+        String procedureDescriptorId = null;
+        if (eventProcedureId() != null) {
+            procedureDescriptorId = entityDescriptorIds.get(eventProcedureId(), ModelTypes.EVENT_PROCEDURE_V1).orElse(null);
+        }
+
         return EventDefinitionEntity.builder()
                 .scope(ValueReference.of(scope()))
                 .updatedAt(updatedAt())
+                .matchedAt(matchedAt())
                 .title(ValueReference.of(title()))
                 .description(ValueReference.of(description()))
+                .remediationSteps(ValueReference.ofNullable(remediationSteps()))
                 .priority(ValueReference.of(priority()))
                 .alert(ValueReference.of(alert()))
                 .config(eventProcessorConfigEntity)
@@ -273,19 +316,27 @@ public abstract class EventDefinitionDto extends ScopedEntity implements EventDe
                 .fieldSpec(fieldSpec())
                 .keySpec(keySpec())
                 .storage(storage())
+                .eventProcedureId(ValueReference.ofNullable(procedureDescriptorId))
                 .build();
     }
 
     @Override
     public void resolveNativeEntity(EntityDescriptor entityDescriptor, MutableGraph<EntityDescriptor> mutableGraph) {
         notifications().stream().map(EventNotificationHandler.Config::notificationId)
-            .forEach(id -> {
+                .forEach(id -> {
                     final EntityDescriptor depNotification = EntityDescriptor.builder()
-                        .id(ModelId.of(id))
-                        .type(ModelTypes.NOTIFICATION_V1)
-                        .build();
+                            .id(ModelId.of(id))
+                            .type(ModelTypes.NOTIFICATION_V1)
+                            .build();
                     mutableGraph.putEdge(entityDescriptor, depNotification);
                 });
+        if (eventProcedureId() != null && !eventProcedureId().isEmpty()) {
+            final EntityDescriptor depProcedure = EntityDescriptor.builder()
+                    .id(ModelId.of(eventProcedureId()))
+                    .type(ModelTypes.EVENT_PROCEDURE_V1)
+                    .build();
+            mutableGraph.putEdge(entityDescriptor, depProcedure);
+        }
         config().resolveNativeEntity(entityDescriptor, mutableGraph);
     }
 }

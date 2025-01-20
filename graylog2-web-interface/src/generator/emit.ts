@@ -17,6 +17,7 @@
 import * as ts from 'typescript';
 import chunk from 'lodash/chunk';
 import uniq from 'lodash/uniq';
+import type { Expression } from 'typescript';
 
 import type { Api, Route, Operation, Parameter, Type, EnumType, TypeLiteral, Model } from 'generator/Api';
 
@@ -32,6 +33,7 @@ const typeMappings = {
   DateTime: 'string',
   ChunkedOutput: 'unknown',
   ZonedDateTime: 'string',
+  Object: 'any',
 };
 
 const emitNumberOrString = (type: string) => {
@@ -58,11 +60,12 @@ const emitIndexerSignature = (additionalProperties: Type) => (additionalProperti
 )] : []);
 
 // ===== Models ===== //
+const isOptional = (propDef: Type) => 'optional' in propDef && propDef.optional;
 const emitProps = (properties: Record<string, Type>) => Object.entries(properties)
   .map(([propName, propDef]) => ts.factory.createPropertySignature(
     [readonlyModifier],
     quotePropNameIfNeeded(propName),
-    undefined,
+    isOptional(propDef) ? ts.factory.createToken(ts.SyntaxKind.QuestionToken) : undefined,
     // eslint-disable-next-line @typescript-eslint/no-use-before-define
     emitType(propDef),
   ));
@@ -128,7 +131,58 @@ const emitTemplateString = (path: string) => {
 
 const cleanVariableName = (name: string) => name.replace(/-(\w?)/g, (substr) => (substr[1] ? substr[1].toUpperCase() : ''));
 
-const emitBlock = (method: string, path: any, bodyParameter: Parameter, queryParameter: Parameter[], rawProduces: string[]) => {
+const isArrayType = (type: Type): boolean => type.type === 'array' || (type.type === 'type_reference' && type.name.endsWith('Array'));
+
+const emitFormDataAssignments = ({ name, type }: Parameter) => {
+  if (isArrayType(type)) {
+    return ts.factory.createExpressionStatement(ts.factory.createCallExpression(
+      ts.factory.createPropertyAccessExpression(
+        ts.factory.createIdentifier(name),
+        ts.factory.createIdentifier('forEach'),
+      ),
+      undefined,
+      [ts.factory.createArrowFunction(
+        undefined,
+        undefined,
+        [ts.factory.createParameterDeclaration(
+          undefined,
+          undefined,
+          ts.factory.createIdentifier('f'),
+          undefined,
+          undefined,
+          undefined,
+        )],
+        undefined,
+        ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+        ts.factory.createCallExpression(
+          ts.factory.createPropertyAccessExpression(
+            ts.factory.createIdentifier('formData'),
+            ts.factory.createIdentifier('append'),
+          ),
+          undefined,
+          [
+            ts.factory.createStringLiteral(name),
+            ts.factory.createIdentifier('f'),
+          ],
+        ),
+      )],
+    ));
+  }
+
+  return ts.factory.createExpressionStatement(ts.factory.createCallExpression(
+    ts.factory.createPropertyAccessExpression(
+      ts.factory.createIdentifier('formData'),
+      ts.factory.createIdentifier('append'),
+    ),
+    undefined,
+    [
+      ts.factory.createStringLiteral(name),
+      ts.factory.createIdentifier(name),
+    ],
+  ));
+};
+
+const emitBlock = (method: string, path: any, bodyParameter: Parameter, queryParameter: Parameter[], rawProduces: string[], formDataParameters: Parameter[]) => {
   const produces = rawProduces || [];
   const queryParameters = ts.factory.createObjectLiteralExpression(
     queryParameter.map((q) => ts.factory.createPropertyAssignment(
@@ -136,6 +190,28 @@ const emitBlock = (method: string, path: any, bodyParameter: Parameter, queryPar
       ts.factory.createIdentifier(cleanVariableName(q.name)),
     )),
   );
+
+  const formDataAssignments = formDataParameters.map(emitFormDataAssignments);
+
+  const formDataStatements = formDataParameters.length > 0 ? [
+    ts.factory.createVariableStatement(
+      undefined,
+      ts.factory.createVariableDeclarationList(
+        [ts.factory.createVariableDeclaration(
+          ts.factory.createIdentifier('formData'),
+          undefined,
+          undefined,
+          ts.factory.createNewExpression(
+            ts.factory.createIdentifier('FormData'),
+            undefined,
+            [],
+          ),
+        )],
+        ts.NodeFlags.Const,
+      ),
+    ),
+    ...formDataAssignments,
+  ] : [];
 
   const headers = ts.factory.createObjectLiteralExpression(
     [ts.factory.createPropertyAssignment(
@@ -145,8 +221,16 @@ const emitBlock = (method: string, path: any, bodyParameter: Parameter, queryPar
     true,
   );
 
+  // eslint-disable-next-line no-nested-ternary
+  const body = formDataParameters.length > 0
+    ? ts.factory.createIdentifier('formData')
+    : bodyParameter
+      ? ts.factory.createIdentifier(bodyParameter.name)
+      : ts.factory.createNull();
+
   return ts.factory.createBlock(
     [
+      ...formDataStatements,
       ts.factory.createReturnStatement(
         ts.factory.createCallExpression(
           ts.factory.createIdentifier(REQUEST_FUNCTION_NAME),
@@ -154,7 +238,7 @@ const emitBlock = (method: string, path: any, bodyParameter: Parameter, queryPar
           [
             emitString(method),
             emitTemplateString(path),
-            bodyParameter ? ts.factory.createIdentifier(bodyParameter.name) : ts.factory.createNull(),
+            body,
             queryParameters,
             headers,
           ],
@@ -165,28 +249,20 @@ const emitBlock = (method: string, path: any, bodyParameter: Parameter, queryPar
   );
 };
 
-const isNumeric = (type: string) => ['integer', 'number'].includes(type);
-const isBoolean = (type: string) => ['boolean'].includes(type);
-
 const emitInitializer = (type: Type, defaultValue: string) => {
   const typeName = 'name' in type ? type.name : undefined;
 
-  if (typeName && isNumeric(typeName)) {
-    return ts.factory.createNumericLiteral(defaultValue);
+  if (typeName === 'string') {
+    return emitString(defaultValue);
   }
 
-  if (typeName && isBoolean(typeName)) {
-    switch (defaultValue) {
-      case 'true':
-        return ts.factory.createTrue();
-      case 'false':
-        return ts.factory.createFalse();
-      default:
-        throw new Error(`Invalid boolean value: ${defaultValue}`);
-    }
-  }
+  try {
+    const sf = ts.createSourceFile('<stdin>', `return ${defaultValue};`, ts.ScriptTarget.Latest);
 
-  return emitString(defaultValue);
+    return (sf.getChildAt(0).getChildAt(0) as any).expression as Expression;
+  } catch {
+    return emitString(defaultValue);
+  }
 };
 
 const sortByOptionality = (parameter1: Parameter, parameter2: Parameter) => Number(parameter2.required) - Number(parameter1.required);
@@ -266,6 +342,7 @@ const deriveNameFromParameters = (functionName: string, parameters: Parameter[])
 
 const bannedFunctionNames = {
   delete: 'remove',
+  export: 'export_',
 };
 
 const unbanFunctionname = (nickname: string): string => (Object.keys(bannedFunctionNames).includes(nickname) ? bannedFunctionNames[nickname] : nickname);
@@ -282,6 +359,7 @@ const emitRoute = ({
   const parameters = rawParameters.map((parameter) => ({ ...parameter, name: cleanParameterName(parameter.name) }));
   const queryParameters = parameters.filter((parameter) => parameter.paramType === 'query');
   const bodyParameter = parameters.filter((parameter) => parameter.paramType === 'body');
+  const formDataParameters = parameters.filter((parameter) => parameter.paramType === 'formdata');
 
   const jsDoc = ts.factory.createJSDocComment(summary,
     ts.factory.createNodeArray(
@@ -306,7 +384,7 @@ const emitRoute = ({
         undefined,
         parameters.sort(sortByOptionality).map(emitFunctionParameter),
         emitPromiseResultType(emitType(type)),
-        emitBlock(method, firstNonEmpty(operationPath, path) || '/', bodyParameter[0], queryParameters, produces),
+        emitBlock(method, firstNonEmpty(operationPath, path) || '/', bodyParameter[0], queryParameters, produces, formDataParameters),
       )],
   };
 };
@@ -345,7 +423,7 @@ const importDeclaration = ts.factory.createImportDeclaration(
 
 const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
 
-const cleanIdentifier = (name: string) => name.replace(/\//g, '');
+const cleanIdentifier = (name: string) => name.replace(/[/-]/g, '');
 
 function emitSummary(apis: Array<Api>) {
   const packageIndexFile = ts.createSourceFile('index.ts', '', ts.ScriptTarget.ESNext, false, ts.ScriptKind.TS);

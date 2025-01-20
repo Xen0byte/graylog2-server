@@ -16,11 +16,13 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 
 import type { DataNodesCA } from 'preflight/types';
 import type FetchError from 'logic/errors/FetchError';
 import fetch from 'logic/rest/FetchProvider';
 import { qualifyUrl } from 'util/URLUtils';
+import { onSettled } from 'util/conditional/onError';
 
 export const QUERY_KEY = ['data-nodes', 'ca-status'];
 const fetchDataNodesCA = (): Promise<DataNodesCA> => (
@@ -33,19 +35,40 @@ const useDataNodesCA = (): {
   error: FetchError,
   isInitialLoading: boolean
 } => {
+  const [metaData, setMetaData] = useState<{
+    error: FetchError | null,
+    isInitialLoading: boolean,
+  }>({
+    error: null,
+    isInitialLoading: false,
+  });
   const {
     data,
     isFetching,
-    error,
-    isInitialLoading,
   } = useQuery<DataNodesCA, FetchError>({
     queryKey: QUERY_KEY,
-    queryFn: fetchDataNodesCA,
+    queryFn: () => onSettled(fetchDataNodesCA(), () => {
+      setMetaData({
+        error: null,
+        isInitialLoading: false,
+      });
+    }, (newError: FetchError) => {
+      setMetaData({
+        error: newError,
+        isInitialLoading: false,
+      });
+    }),
     initialData: undefined,
-    retry: 3000,
+    refetchInterval: 3000,
+    retry: false,
   });
 
-  return { data, isFetching, error, isInitialLoading };
+  return {
+    data,
+    isFetching,
+    isInitialLoading: metaData.isInitialLoading,
+    error: metaData.error,
+  };
 };
 
 export default useDataNodesCA;

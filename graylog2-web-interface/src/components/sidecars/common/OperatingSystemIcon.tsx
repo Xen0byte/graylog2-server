@@ -15,21 +15,34 @@
  * <http://www.mongodb.com/licensing/server-side-public-license>.
  */
 import * as React from 'react';
-import PropTypes from 'prop-types';
 import styled from 'styled-components';
 
 import { Icon } from 'components/common';
+import BrandIcon from 'components/common/BrandIcon';
 
-const SidecarIcon = styled(Icon)`
+const Container = styled.div`
+  display: inline-block;
+  vertical-align: middle;
   margin-right: 5px;
   margin-left: 2px;
 `;
 
 type Props = {
-  operatingSystem: string,
+  operatingSystem?: string
 };
 
-const matchIcon = (os: string) => {
+const defaultIcon = {
+  iconName: 'help',
+  iconType: 'default',
+} as const;
+
+const matchIcon = (_os: string) => {
+  if (!_os) {
+    return defaultIcon;
+  }
+
+  const os = _os.trim().toLowerCase();
+
   if (os.includes('darwin') || os.includes('mac os')) {
     return {
       iconName: 'apple',
@@ -58,26 +71,19 @@ const matchIcon = (os: string) => {
     } as const;
   }
 
-  return {
-    iconName: 'question-circle',
-    iconType: 'solid',
-  } as const;
+  return defaultIcon;
 };
 
-const OperatingSystemIcon = ({ operatingSystem }: Props) => {
-  const { iconName, iconType } = matchIcon(operatingSystem.trim().toLowerCase());
+const OperatingSystemIcon = ({ operatingSystem = undefined }: Props) => {
+  const { iconName, iconType } = matchIcon(operatingSystem);
 
   return (
-    <SidecarIcon name={iconName} type={iconType} fixedWidth />
+    <Container>
+      {iconType === 'brand'
+        ? <BrandIcon name={iconName} />
+        : <Icon name={iconName} />}
+    </Container>
   );
-};
-
-OperatingSystemIcon.propTypes = {
-  operatingSystem: PropTypes.string,
-};
-
-OperatingSystemIcon.defaultProps = {
-  operatingSystem: undefined,
 };
 
 export default OperatingSystemIcon;

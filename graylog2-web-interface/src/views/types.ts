@@ -14,11 +14,14 @@
  * along with this program. If not, see
  * <http://www.mongodb.com/licensing/server-side-public-license>.
  */
+
 import type React from 'react';
 import type * as Immutable from 'immutable';
 import type { FormikErrors } from 'formik';
 import type { Reducer, AnyAction } from '@reduxjs/toolkit';
 
+import type { ExportPayload } from 'util/MessagesExportUtils';
+import type { IconName } from 'components/common/Icon';
 import type Widget from 'views/logic/widgets/Widget';
 import type { ActionDefinition } from 'views/components/actions/ActionHandler';
 import type { VisualizationComponent } from 'views/components/aggregationbuilder/AggregationBuilder';
@@ -53,8 +56,12 @@ import type SearchMetadata from 'views/logic/search/SearchMetadata';
 import type { AppDispatch } from 'stores/useAppDispatch';
 import type SearchResult from 'views/logic/SearchResult';
 import type { WidgetMapping } from 'views/logic/views/types';
-import type { Event } from 'components/events/events/types';
 import type Parameter from 'views/logic/parameters/Parameter';
+import type { UndoRedoState } from 'views/logic/slices/undoRedoSlice';
+import type { SearchExecutors } from 'views/logic/slices/searchExecutionSlice';
+import type { JobIds } from 'views/stores/SearchJobs';
+import type { FilterComponents, Attributes } from 'views/components/widgets/overview-configuration/filters/types';
+import type { Event } from 'components/events/events/types';
 
 export type ArrayElement<ArrayType extends readonly unknown[]> =
   ArrayType extends readonly (infer ElementType)[] ? ElementType : never;
@@ -77,12 +84,11 @@ export interface EditWidgetComponentProps<Config extends WidgetConfig = WidgetCo
   type: string;
   fields: Immutable.List<FieldTypeMapping>,
   onChange: (newConfig: Config) => void,
-  onSubmit: () => void,
   onCancel: () => void,
 }
 
 export interface WidgetResults {
- [key: string]: Result,
+  [key: string]: Result,
 }
 
 export interface WidgetComponentProps<Config extends WidgetConfig = WidgetConfig, Results = WidgetResults> {
@@ -90,14 +96,16 @@ export interface WidgetComponentProps<Config extends WidgetConfig = WidgetConfig
   data: Results;
   editing: boolean;
   fields: Immutable.List<FieldTypeMapping>;
-  filter: string;
+  filter?: string;
   queryId: string;
-  onConfigChange: (newConfig: Config) => Promise<void>;
+  onConfigChange?: (newConfig: Config) => Promise<void>;
   setLoadingState: (loading: boolean) => void;
-  title: string;
-  toggleEdit: () => void;
-  type: string;
+  title?: string;
+  toggleEdit?: () => void;
+  type?: string;
   id: string;
+  height: number;
+  width: number;
 }
 
 export interface WidgetExport {
@@ -112,7 +120,6 @@ export interface WidgetExport {
   searchResultTransformer?: (data: Array<unknown>) => unknown;
   searchTypes: (widget: Widget) => Array<any>;
   titleGenerator?: (widget: { config: Widget['config'] }) => string;
-  reportStyle?: () => { width: React.CSSProperties['width'] };
   exportComponent?: React.ComponentType<{ widget: Widget }>;
 }
 
@@ -179,25 +186,32 @@ interface SearchType<T, R> {
   defaults: {};
 }
 
-interface ExportFormat {
+export interface ExportFormat {
+  order?: number;
   type: string;
   displayName: () => string;
   disabled?: () => boolean;
   mimeType: string;
   fileExtension: string;
+  formatSpecificFileDownloader?: (format: string, widget: Widget, view: View, executionState: SearchExecutionState, currentUser: User, currentQuery: Query, exportPayload: ExportPayload,) => Promise<void>
+}
+
+export interface SystemConfigurationComponentProps<T = unknown> {
+  config: T,
+  updateConfig: (newConfig: T) => any,
 }
 
 export interface SystemConfiguration {
+  skipClusterConfigRequest?: boolean,
   configType: string;
-  component: React.ComponentType<{
-    config: any,
-    updateConfig: (newConfig: any) => any,
-  }>;
+  displayName?: string;
+  component: React.ComponentType<SystemConfigurationComponentProps>;
 }
 
 export type SearchTypeResult = {
   type: string,
-  effective_timerange: TimeRange,
+  effective_timerange: AbsoluteTimeRange,
+  total: number,
 };
 
 export type MessageResult = {
@@ -235,10 +249,10 @@ export type MessagePreviewOption = {
 }
 
 type ExternalActionsHookData = {
-      error: Error | null;
-      externalValueActions: Array<ActionDefinition> | null;
-      isLoading: boolean;
-      isError: boolean
+  error: Error | null;
+  externalValueActions: Array<ActionDefinition> | null;
+  isLoading: boolean;
+  isError: boolean
 }
 
 type MessageAugmentation = {
@@ -250,33 +264,84 @@ type MessageDetailContextProviderProps = {
   message: Message,
 }
 
-type DashboardActionComponentProps = {
+type DashboardActionComponentProps<T> = {
   dashboard: View,
-  modalRef: () => unknown,
+  modalRef: () => T,
 }
 
-type DashboardActionModalProps = {
+type EventWidgetActionComponentProps<T> = {
+  eventId: string,
+  modalRef: () => T,
+}
+
+type DashboardActionModalProps<T> = React.PropsWithRef<{
   dashboard: View,
-  ref: React.Ref<unknown>,
+}> & {
+  ref: React.LegacyRef<T>
+};
+
+type EventWidgetActionModalProps<T> = React.PropsWithRef<{
+  eventId: string,
+}> & {
+  ref: React.LegacyRef<T>,
 }
 
-type AssetActionComponentProps = {
-  identifier: unknown,
+export type EventActionModalProps<T> = React.PropsWithRef<{
+  events: Array<Event>,
+  fromBulk?: boolean,
+}> & {
+  ref: React.LegacyRef<T>,
 }
 
-type DashboardAction = {
+type SearchActionModalProps = React.PropsWithRef<{
+  search: View,
+}> & {
+  ref: React.LegacyRef<unknown>,
+}
+
+type AssetInformationComponentProps = {
+  identifiers: unknown,
+  addToQuery: (id: string) => void;
+}
+
+type SearchAction = {
+  component: React.ComponentType<SearchActionComponentProps>,
   key: string,
-  component: React.ComponentType<DashboardActionComponentProps>,
-  modal?: React.ComponentType<DashboardActionModalProps>,
-}
+  modals: Array<{ key: string, component: React.ComponentType<SearchActionModalProps> }>,
+  useCondition: () => boolean,
+};
 
-type AssetAction = {
+type DashboardAction<T> = {
   key: string,
-  component: React.ComponentType<AssetActionComponentProps>,
+  component: React.ComponentType<DashboardActionComponentProps<T>>,
+  modal?: React.ComponentType<DashboardActionModalProps<T>>,
+  useCondition?: () => boolean,
 }
 
-type EventActionComponentProps = {
-  event: Event,
+export type EventAction<T = unknown> = {
+  useCondition: (events: Array<Event>) => boolean,
+  modal?: React.ComponentType<EventActionModalProps<T>>,
+  component: React.ComponentType<EventActionComponentProps<T>>,
+  key: string,
+  isBulk?: boolean
+}
+
+type EventWidgetAction<T> = {
+  key: string,
+  component: React.ComponentType<EventWidgetActionComponentProps<T>>,
+  modal?: React.ComponentType<EventWidgetActionModalProps<T>>,
+  useCondition?: () => boolean,
+}
+
+type AssetInformation = {
+  component: React.ComponentType<AssetInformationComponentProps>,
+  key: string,
+}
+
+export type EventActionComponentProps<T = unknown> = {
+  events: Array<Event>,
+  modalRef: () => T,
+  fromBulk?: boolean,
 }
 
 type MessageActionComponentProps = {
@@ -286,7 +351,8 @@ type MessageActionComponentProps = {
 
 type SearchActionComponentProps = {
   loaded: boolean,
-  view: View,
+  search: View,
+  modalRefs?: { [key: string]: () => unknown },
 }
 
 export type CopyParamsToView = (sourceView: View, targetView: View) => View;
@@ -302,6 +368,7 @@ interface MessageRowOverrideProps {
 export interface CombinedSearchBarFormValues {
   timerange?: TimeRange | NoTimeRangeOverride,
   streams?: Array<string>,
+  streamCategories?: Array<string>,
   queryString?: string,
 }
 
@@ -315,11 +382,11 @@ export interface SearchBarControl {
   id: string;
   onSearchSubmit?: <T extends Query | undefined>(values: CombinedSearchBarFormValues, dispatch: AppDispatch, currentQuery?: T) => Promise<T>,
   onDashboardWidgetSubmit: (values: CombinedSearchBarFormValues, dispatch: AppDispatch, currentWidget: Widget) => Promise<Widget | void>,
-  onValidate?: (values: CombinedSearchBarFormValues, context: HandlerContext) => FormikErrors<{}>,
+  onValidate?: (values: CombinedSearchBarFormValues, context?: HandlerContext) => FormikErrors<{}>,
   placement: 'left' | 'right';
   useInitialSearchValues?: (currentQuery?: Query) => ({ [key: string]: any }),
   useInitialDashboardWidgetValues?: (currentWidget: Widget) => ({ [key: string]: any }),
-  validationPayload?: (values: CombinedSearchBarFormValues, context: HandlerContext) => ({ [key: string]: any }),
+  validationPayload?: (values: CombinedSearchBarFormValues, context?: HandlerContext) => ({ [key: string]: any }),
 }
 
 export type SearchFilter = {
@@ -358,11 +425,13 @@ export type SearchExecutionResult = {
   widgetMapping: WidgetMapping,
 };
 
+export type JobIdsState = JobIds | null;
 export interface SearchExecution {
   executionState: SearchExecutionState;
   result: SearchExecutionResult;
   isLoading: boolean;
   widgetsToSearch: Array<string>,
+  jobIds?: JobIds | null,
 }
 
 export interface SearchMetadataState {
@@ -374,6 +443,11 @@ export interface RootState {
   view: ViewState;
   searchExecution: SearchExecution;
   searchMetadata: SearchMetadataState;
+  undoRedo: UndoRedoState
+}
+
+export interface ExtraArguments {
+  searchExecutors: SearchExecutors;
 }
 
 export type GetState = () => RootState;
@@ -394,6 +468,18 @@ export interface WidgetCreator {
   icon: React.ComponentType<{}>,
 }
 
+export type FieldUnitType = 'size' | 'time' | 'percent';
+
+export type FieldUnitsFormValues = Record<string, {abbrev: string; unitType: FieldUnitType}>;
+
+export type SearchDataSource = {
+  key: string,
+  title: string,
+  icon: IconName,
+  link: string,
+  useCondition: () => boolean,
+}
+
 declare module 'graylog-web-plugin/plugin' {
   export interface PluginExports {
     creators?: Array<Creator>;
@@ -405,12 +491,9 @@ declare module 'graylog-web-plugin/plugin' {
     systemConfigurations?: Array<SystemConfiguration>;
     valueActions?: Array<ActionDefinition>;
     'views.completers'?: Array<Completer>;
-    'views.components.assetValueActions'?: Array<AssetAction>;
-    'views.components.dashboardActions'?: Array<DashboardAction>;
-    'views.components.eventActions'?: Array<{
-      component: React.ComponentType<EventActionComponentProps>,
-      key: string,
-    }>;
+    'views.components.assetInformationActions'?: Array<AssetInformation>;
+    'views.components.dashboardActions'?: Array<DashboardAction<unknown>>
+    'views.components.eventActions'?: Array<EventAction<unknown>>;
     'views.components.widgets.messageTable.previewOptions'?: Array<MessagePreviewOption>;
     'views.components.widgets.messageTable.messageRowOverride'?: Array<React.ComponentType<MessageRowOverrideProps>>;
     'views.components.widgets.messageDetails.contextProviders'?: Array<React.ComponentType<React.PropsWithChildren<MessageDetailContextProviderProps>>>;
@@ -418,11 +501,17 @@ declare module 'graylog-web-plugin/plugin' {
     'views.components.widgets.messageTable.messageActions'?: Array<{
       component: React.ComponentType<MessageActionComponentProps>,
       key: string,
+      useCondition: () => boolean,
     }>;
-    'views.components.searchActions'?: Array<{
-      component: React.ComponentType<SearchActionComponentProps>,
+    'views.components.widgets.events.filterComponents'?: FilterComponents;
+    'views.components.widgets.events.attributes'?: Attributes;
+    'views.components.widgets.events.detailsComponent'?: Array<{
+      component: React.ComponentType<{ eventId: string }>,
+      useCondition: () => boolean,
       key: string,
     }>;
+    'views.components.widgets.events.actions'?: Array<EventWidgetAction<unknown>>;
+    'views.components.searchActions'?: Array<SearchAction>;
     'views.components.searchBar'?: Array<() => SearchBarControl | null>;
     'views.components.saveViewForm'?: Array<() => SaveViewControls | null>;
     'views.elements.header'?: Array<React.ComponentType>;
@@ -438,26 +527,14 @@ declare module 'graylog-web-plugin/plugin' {
     'views.hooks.copyPageToDashboard'?: Array<CopyParamsToView>;
     'views.hooks.removingWidget'?: Array<RemovingWidgetHook>;
     'views.overrides.widgetEdit'?: Array<React.ComponentType<OverrideProps>>;
+    'views.searchDataSources'?: Array<SearchDataSource>;
     'views.widgets.actions'?: Array<WidgetActionType>;
+    'views.widgets.exportAction'?: Array<{ action: WidgetActionType, useCondition: () => boolean }>;
     'views.reducers'?: Array<ViewsReducer>;
     'views.requires.provided'?: Array<string>;
     'views.queryInput.commands'?: Array<CustomCommand>;
     'views.queryInput.commandContextProviders'?: Array<CustomCommandContextProvider<any>>,
     visualizationTypes?: Array<VisualizationType<any>>;
     widgetCreators?: Array<WidgetCreator>;
-  }
-}
-export interface ViewActions {
-  save: {
-    isShown: boolean,
-  };
-  saveAs: {
-    isShown: boolean,
-  };
-  share: {
-    isShown: boolean,
-  }
-  actionsDropdown: {
-    isShown: boolean,
   }
 }

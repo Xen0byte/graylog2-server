@@ -23,6 +23,8 @@ import org.graylog.plugins.views.search.Query;
 import org.graylog.plugins.views.search.aggregations.MissingBucketConstants;
 import org.graylog.plugins.views.search.searchtypes.pivot.BucketSpec;
 import org.graylog.plugins.views.search.searchtypes.pivot.Pivot;
+import org.graylog.plugins.views.search.searchtypes.pivot.PivotSort;
+import org.graylog.plugins.views.search.searchtypes.pivot.SortSpec;
 import org.graylog.plugins.views.search.searchtypes.pivot.buckets.Values;
 import org.graylog.plugins.views.search.searchtypes.pivot.buckets.ValuesBucketOrdering;
 import org.graylog.shaded.elasticsearch7.org.elasticsearch.index.query.BoolQueryBuilder;
@@ -44,6 +46,7 @@ import org.graylog.storage.elasticsearch7.views.searchtypes.pivot.PivotBucket;
 import javax.annotation.Nonnull;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -52,75 +55,117 @@ public class ESValuesHandler extends ESPivotBucketSpecHandler<Values> {
     private static final String KEY_SEPARATOR_CHARACTER = "\u2E31";
     private static final String KEY_SEPARATOR_PHRASE = " + \"" + KEY_SEPARATOR_CHARACTER + "\" + ";
     private static final String AGG_NAME = "agg";
-    private static final ImmutableList<String> MISSING_BUCKET_KEYS = ImmutableList.of(MissingBucketConstants.MISSING_BUCKET_NAME);
-    private static final BucketOrder defaultOrder = BucketOrder.count(false);
+    public static final BucketOrder DEFAULT_ORDER = BucketOrder.count(false);
+    public static final String SORT_HELPER = "sort_helper";
 
     @Nonnull
     @Override
     public CreatedAggregations<AggregationBuilder> doCreateAggregation(Direction direction, String name, Pivot pivot, Values bucketSpec, ESGeneratedQueryContext queryContext, Query query) {
-        final List<BucketOrder> ordering = orderListForPivot(pivot, queryContext, defaultOrder);
+        final var ordering = orderListForPivot(pivot, queryContext, DEFAULT_ORDER, query);
         final int limit = bucketSpec.limit();
         final List<String> orderedBuckets = ValuesBucketOrdering.orderFields(bucketSpec.fields(), pivot.sort());
-        final AggregationBuilder termsAggregation = createTerms(orderedBuckets, ordering, limit);
-        final FiltersAggregationBuilder filterAggregation = createFilter(name, orderedBuckets)
-                .subAggregation(termsAggregation);
+        final var termsAggregation = createTerms(orderedBuckets, limit);
 
+        termsAggregation.order(ordering.orders());
+        ordering.sortingAggregations().forEach(termsAggregation::subAggregation);
+
+        final FiltersAggregationBuilder filterAggregation = createFilter(name, orderedBuckets, bucketSpec.skipEmptyValues())
+                .subAggregation(termsAggregation);
         return CreatedAggregations.create(filterAggregation, termsAggregation, List.of(termsAggregation, filterAggregation));
     }
 
-    private FiltersAggregationBuilder createFilter(String name, List<String> fields) {
+    private FiltersAggregationBuilder createFilter(String name, List<String> fields, boolean skipEmptyValues) {
         final BoolQueryBuilder queryBuilder = QueryBuilders.boolQuery();
         fields.stream()
                 .map(QueryBuilders::existsQuery)
-                .forEach(queryBuilder::filter);
+                .forEach(skipEmptyValues ? queryBuilder::must : queryBuilder::should);
         return AggregationBuilders.filters(name, queryBuilder)
                 .otherBucket(true);
     }
 
 
-    private AggregationBuilder createTerms(List<String> valueBuckets, List<BucketOrder> ordering, int limit) {
-        return valueBuckets.size() > 1
-                ? createScriptedTerms(valueBuckets, ordering, limit)
-                : createSimpleTerms(valueBuckets.get(0), ordering, limit);
+    private TermsAggregationBuilder createTerms(List<String> valueBuckets, int limit) {
+        return createScriptedTerms(valueBuckets, limit);
     }
 
-    private TermsAggregationBuilder createSimpleTerms(String field, List<BucketOrder> ordering, int limit) {
-        return AggregationBuilders.terms(AGG_NAME)
-                .field(field)
-                .order(ordering)
-                .size(limit);
-    }
-
-    private TermsAggregationBuilder createScriptedTerms(List<String> buckets, List<BucketOrder> ordering, int limit) {
+    private TermsAggregationBuilder createScriptedTerms(List<String> buckets, int limit) {
         return AggregationBuilders.terms(AGG_NAME)
                 .script(scriptForPivots(buckets))
-                .size(limit)
-                .order(ordering);
+                .size(limit);
     }
 
     private Script scriptForPivots(Collection<String> pivots) {
         final String scriptSource = Joiner.on(KEY_SEPARATOR_PHRASE).join(pivots.stream()
                 .map(bucket -> """
-                        String.valueOf((doc.containsKey('%1$s') && doc['%1$s'].size() > 0) ? doc['%1$s'].value : "%2$s")
+                        (doc.containsKey('%1$s') && doc['%1$s'].size() > 0
+                        ? doc['%1$s'].size() > 1
+                            ? doc['%1$s']
+                            : String.valueOf(doc['%1$s'].value)
+                        : "%2$s")
                         """.formatted(bucket, MissingBucketConstants.MISSING_BUCKET_NAME))
                 .collect(Collectors.toList()));
         return new Script(scriptSource);
     }
 
+    private TermsAggregationBuilder applyOrdering(Pivot pivot, TermsAggregationBuilder terms, List<BucketOrder> ordering, ESGeneratedQueryContext queryContext) {
+        return sortsOnNumericPivotField(pivot, queryContext)
+                /* When we sort on a numeric pivot field, we create a metric sub-aggregation for that field, which returns
+                the numeric value of it, so that we can sort on it numerically. Any metric aggregation (min/max/avg) will work. */
+                .map(pivotSort -> terms
+                        .subAggregation(AggregationBuilders.max(SORT_HELPER).field(pivotSort.field()))
+                        .order(BucketOrder.aggregation(SORT_HELPER, SortSpec.Direction.Ascending.equals(pivotSort.direction()))))
+                .orElseGet(() -> terms
+                        .order(ordering.isEmpty() ? List.of(DEFAULT_ORDER) : ordering));
+    }
+
+    private Optional<PivotSort> sortsOnNumericPivotField(Pivot pivot, ESGeneratedQueryContext queryContext) {
+        return Optional.ofNullable(pivot.sort())
+                .filter(sorts -> sorts.size() == 1)
+                .map(sorts -> sorts.get(0))
+                .filter(sort -> sort instanceof PivotSort)
+                .map(sort -> (PivotSort) sort)
+                .filter(pivotSort -> queryContext.fieldType(pivot.effectiveStreams(), pivotSort.field())
+                        .filter(this::isNumericFieldType)
+                        .isPresent());
+    }
+
+    private boolean isNumericFieldType(String fieldType) {
+        return fieldType.equals("long") || fieldType.equals("double") || fieldType.equals("float");
+    }
+
     @Override
     public Stream<PivotBucket> extractBuckets(Pivot pivot, BucketSpec bucketSpec, PivotBucket initialBucket) {
+        var values = (Values) bucketSpec;
         final ImmutableList<String> previousKeys = initialBucket.keys();
         final MultiBucketsAggregation.Bucket previousBucket = initialBucket.bucket();
+        final Function<List<String>, List<String>> reorderKeys = ValuesBucketOrdering.reorderFieldsFunction(bucketSpec.fields(), pivot.sort());
+
         final Aggregation aggregation = previousBucket.getAggregations().get(AGG_NAME);
         if (!(aggregation instanceof final ParsedFilters filterAggregation)) {
             // This happens when the other bucket is passed for column value extraction
             return Stream.of(initialBucket);
         }
         final MultiBucketsAggregation termsAggregation = filterAggregation.getBuckets().get(0).getAggregations().get(AGG_NAME);
-        final Filters.Bucket otherBucket = filterAggregation.getBuckets().get(1);
+        if (values.skipEmptyValues()) {
+            return extractTermsBuckets(previousKeys, reorderKeys, termsAggregation);
+        } else {
 
-        final Function<List<String>, List<String>> reorderKeys = ValuesBucketOrdering.reorderFieldsFunction(bucketSpec.fields(), pivot.sort());
-        final Stream<PivotBucket> bucketStream = termsAggregation.getBuckets()
+            final Filters.Bucket otherBucket = filterAggregation.getBuckets().get(1);
+
+            final Stream<PivotBucket> bucketStream = extractTermsBuckets(previousKeys, reorderKeys, termsAggregation);
+
+            if (otherBucket.getDocCount() > 0) {
+                final MultiBucketsAggregation otherTermsAggregations = otherBucket.getAggregations().get(AGG_NAME);
+                final var otherStream = extractTermsBuckets(previousKeys, reorderKeys, otherTermsAggregations);
+                return Stream.concat(bucketStream, otherStream);
+            } else {
+                return bucketStream;
+            }
+        }
+    }
+
+    private Stream<PivotBucket> extractTermsBuckets(ImmutableList<String> previousKeys, Function<List<String>, List<String>> reorderKeys, MultiBucketsAggregation termsAggregation) {
+        return termsAggregation.getBuckets()
                 .stream()
                 .map(bucket -> {
                     final ImmutableList<String> keys = ImmutableList.<String>builder()
@@ -130,17 +175,6 @@ public class ESValuesHandler extends ESPivotBucketSpecHandler<Values> {
 
                     return PivotBucket.create(keys, bucket, false);
                 });
-
-        return otherBucket.getDocCount() > 0
-                ? Stream.concat(bucketStream, Stream.of(PivotBucket.create(
-                    ImmutableList.<String>builder()
-                        .addAll(previousKeys)
-                        .addAll(MISSING_BUCKET_KEYS)
-                        .build(),
-                    otherBucket,
-                    true
-                )))
-                : bucketStream;
     }
 
     private ImmutableList<String> splitKeys(String keys) {

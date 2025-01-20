@@ -17,7 +17,7 @@
 package org.graylog2.rest.documentation.generator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategy;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.graylog2.rest.resources.HelloWorldResource;
 import org.graylog2.shared.ServerVersion;
@@ -44,12 +44,12 @@ public class GeneratorTest {
     public static void init() {
         objectMapper = new ObjectMapper();
         objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-        objectMapper.setPropertyNamingStrategy(PropertyNamingStrategy.SNAKE_CASE);
+        objectMapper.setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
     }
 
     @Test
     public void testGenerateOverview() throws Exception {
-        Generator generator = new Generator(Collections.singleton(HelloWorldResource.class), objectMapper, false);
+        Generator generator = new Generator(Collections.singleton(HelloWorldResource.class), objectMapper, false, true);
         Map<String, Object> result = generator.generateOverview();
 
         assertEquals(ServerVersion.VERSION.toString(), result.get("apiVersion"));
@@ -61,7 +61,7 @@ public class GeneratorTest {
 
     @Test
     public void testGenerateForRoute() throws Exception {
-        Generator generator = new Generator(Collections.singleton(HelloWorldResource.class), objectMapper, false);
+        Generator generator = new Generator(Collections.singleton(HelloWorldResource.class), objectMapper, false, true);
         Map<String, Object> result = generator.generateForRoute("/system", "http://localhost:12900/");
     }
 

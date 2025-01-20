@@ -32,6 +32,8 @@ import org.graylog2.bindings.providers.MongoJackObjectMapperProvider;
 import org.graylog2.database.MongoConnection;
 import org.graylog2.plugin.system.NodeId;
 import org.graylog2.plugin.system.SimpleNodeId;
+import org.graylog2.security.RestrictedChainingClassLoader;
+import org.graylog2.security.SafeClasses;
 import org.graylog2.shared.bindings.providers.ObjectMapperProvider;
 import org.graylog2.shared.plugins.ChainingClassLoader;
 import org.graylog2.system.debug.DebugEvent;
@@ -49,6 +51,7 @@ import org.mockito.junit.MockitoRule;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -74,20 +77,22 @@ public class ClusterEventPeriodicalTest {
     private ClusterEventBus clusterEventBus;
     private MongoConnection mongoConnection;
     private ClusterEventPeriodical clusterEventPeriodical;
+    private MongoJackObjectMapperProvider objectMapperProvider;
 
     @Before
     public void setUpService() throws Exception {
         DateTimeUtils.setCurrentMillisFixed(TIME.getMillis());
 
         this.mongoConnection = mongodb.mongoConnection();
-
-        MongoJackObjectMapperProvider provider = new MongoJackObjectMapperProvider(objectMapper);
+        this.objectMapperProvider = new MongoJackObjectMapperProvider(objectMapper);
 
         this.clusterEventPeriodical = new ClusterEventPeriodical(
-                provider,
+                objectMapperProvider,
                 mongodb.mongoConnection(),
                 nodeId,
-                new ChainingClassLoader(getClass().getClassLoader()),
+                new RestrictedChainingClassLoader(new ChainingClassLoader(getClass().getClassLoader()),
+                        new SafeClasses(Set.of(
+                                SimpleEvent.class.getName(), DebugEvent.class.getName(), Safe.class.getName()))),
                 serverEventBus,
                 clusterEventBus
         );
@@ -282,9 +287,9 @@ public class ClusterEventPeriodicalTest {
         assertThat(original.getName()).isEqualTo(ClusterEventPeriodical.COLLECTION_NAME);
         assertThat(original.getIndexInfo()).hasSize(1);
 
-        DBCollection collection = ClusterEventPeriodical.prepareCollection(mongoConnection);
-        assertThat(collection.getName()).isEqualTo(ClusterEventPeriodical.COLLECTION_NAME);
-        assertThat(collection.getIndexInfo()).hasSize(2);
+        final var collection = ClusterEventPeriodical.prepareCollection(mongoConnection, objectMapperProvider);
+        assertThat(collection.getNamespace().getCollectionName()).isEqualTo(ClusterEventPeriodical.COLLECTION_NAME);
+        assertThat(collection.listIndexes()).hasSize(2);
         assertThat(collection.getWriteConcern()).isEqualTo(WriteConcern.JOURNALED);
     }
 
@@ -294,10 +299,10 @@ public class ClusterEventPeriodicalTest {
         final DB database = mongoConnection.getDatabase();
         database.getCollection(ClusterEventPeriodical.COLLECTION_NAME).drop();
         assertThat(database.collectionExists(ClusterEventPeriodical.COLLECTION_NAME)).isFalse();
-        DBCollection collection = ClusterEventPeriodical.prepareCollection(mongoConnection);
+        final var collection = ClusterEventPeriodical.prepareCollection(mongoConnection, objectMapperProvider);
 
-        assertThat(collection.getName()).isEqualTo(ClusterEventPeriodical.COLLECTION_NAME);
-        assertThat(collection.getIndexInfo()).hasSize(2);
+        assertThat(collection.getNamespace().getCollectionName()).isEqualTo(ClusterEventPeriodical.COLLECTION_NAME);
+        assertThat(collection.listIndexes()).hasSize(2);
         assertThat(collection.getWriteConcern()).isEqualTo(WriteConcern.JOURNALED);
     }
 
@@ -311,7 +316,7 @@ public class ClusterEventPeriodicalTest {
 
         DBObject dbObject = collection.findOne();
 
-        assertThat(((BasicDBList)dbObject.get("consumers")).toArray()).isEqualTo(new String[] { nodeId.getNodeId() });
+        assertThat(((BasicDBList) dbObject.get("consumers")).toArray()).isEqualTo(new String[]{nodeId.getNodeId()});
     }
 
     @Test
@@ -340,6 +345,58 @@ public class ClusterEventPeriodicalTest {
 
         verify(serverEventBus, never()).post(any());
         verify(clusterEventBus, never()).post(any());
+    }
+
+    private static volatile String constructorArgument;
+
+    public static class Unsafe {
+        public Unsafe(String param) {
+            constructorArgument = param;
+        }
+    }
+
+    public static class Safe {
+        public Safe(String param) {
+            constructorArgument = param;
+        }
+    }
+
+    @Test
+    public void testInstantiatesSafeEventClass() {
+        DBObject event = new BasicDBObjectBuilder()
+                .add("timestamp", TIME.getMillis())
+                .add("producer", "TEST-PRODUCER")
+                .add("consumers", Collections.emptyList())
+                .add("event_class", "org.graylog2.events.ClusterEventPeriodicalTest$Safe")
+                .add("payload", "this-is-safe")
+                .get();
+
+        @SuppressWarnings("deprecation")
+        final DBCollection collection = mongoConnection.getDatabase().getCollection(ClusterEventPeriodical.COLLECTION_NAME);
+        collection.save(event);
+
+        constructorArgument = null;
+        clusterEventPeriodical.run();
+        assertThat(constructorArgument).isEqualTo("this-is-safe");
+    }
+
+    @Test
+    public void testIgnoresUnsafeEventClass() {
+        DBObject event = new BasicDBObjectBuilder()
+                .add("timestamp", TIME.getMillis())
+                .add("producer", "TEST-PRODUCER")
+                .add("consumers", Collections.emptyList())
+                .add("event_class", "org.graylog2.events.ClusterEventPeriodicalTest$Unsafe")
+                .add("payload", "this-is-unsafe")
+                .get();
+
+        @SuppressWarnings("deprecation")
+        final DBCollection collection = mongoConnection.getDatabase().getCollection(ClusterEventPeriodical.COLLECTION_NAME);
+        collection.save(event);
+
+        constructorArgument = null;
+        clusterEventPeriodical.run();
+        assertThat(constructorArgument).isNull();
     }
 
     public static class SimpleEventHandler {

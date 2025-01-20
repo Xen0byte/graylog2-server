@@ -29,6 +29,7 @@ import com.lmax.disruptor.SleepingWaitStrategy;
 import com.lmax.disruptor.WaitStrategy;
 import com.lmax.disruptor.YieldingWaitStrategy;
 import org.apache.commons.lang3.StringUtils;
+import org.graylog2.CommonNodeConfiguration;
 import org.graylog2.configuration.PathConfiguration;
 import org.graylog2.shared.messageq.MessageQueueModule;
 import org.graylog2.utilities.ProxyHostsPattern;
@@ -42,14 +43,14 @@ import static org.graylog2.shared.messageq.MessageQueueModule.DISK_JOURNAL_MODE;
 import static org.graylog2.shared.messageq.MessageQueueModule.NOOP_JOURNAL_MODE;
 
 @SuppressWarnings("FieldMayBeFinal")
-public abstract class BaseConfiguration extends PathConfiguration {
+public abstract class BaseConfiguration extends PathConfiguration implements CommonNodeConfiguration {
     private static final Logger LOG = LoggerFactory.getLogger(BaseConfiguration.class);
 
     @Parameter(value = "shutdown_timeout", validator = PositiveIntegerValidator.class)
     protected int shutdownTimeout = 30000;
 
     @Parameter(value = "processbuffer_processors", required = true, validator = PositiveIntegerValidator.class)
-    private int processBufferProcessors = 5;
+    private int processBufferProcessors = defaultNumberOfProcessBufferProcessors();
 
     @Parameter(value = "processor_wait_strategy", required = true)
     private String processorWaitStrategy = "blocking";
@@ -148,7 +149,7 @@ public abstract class BaseConfiguration extends PathConfiguration {
     public int getAsyncEventbusProcessors() {
         return asyncEventbusProcessors;
     }
-    
+
     public boolean isMessageJournalEnabled() {
         return messageJournalEnabled;
     }
@@ -169,6 +170,7 @@ public abstract class BaseConfiguration extends PathConfiguration {
         return udpRecvBufferSizes;
     }
 
+    @Override
     public boolean isMessageRecordingsEnabled() {
         return messageRecordingsEnable;
     }
@@ -225,5 +227,34 @@ public abstract class BaseConfiguration extends PathConfiguration {
             throw new ValidationException("Journal mode (e.g. <" + DISK_JOURNAL_MODE + ">) needs to be " +
                     "provided when the journal is enabled.");
         }
+    }
+
+    /**
+     * Calculate the default number of process buffer processors as a linear function of available CPU cores.
+     * The function is designed to yield predetermined values for the following select numbers of CPU cores that
+     * have proven to work well in real-world production settings:
+     * <table>
+     *     <tr>
+     *         <th># CPU cores</th><th># buffer processors</th>
+     *     </tr>
+     *     <tr>
+     *         <td>2</td><td>1</td>
+     *     </tr>
+     *     <tr>
+     *         <td>4</td><td>2</td>
+     *     </tr>
+     *     <tr>
+     *         <td>8</td><td>4</td>
+     *     </tr>
+     *     <tr>
+     *         <td>12</td><td>5</td>
+     *     </tr>
+     *     <tr>
+     *         <td>16</td><td>6</td>
+     *     </tr>
+     * </table>
+     */
+    private static int defaultNumberOfProcessBufferProcessors() {
+        return Math.round(Tools.availableProcessors() * 0.36f + 0.625f);
     }
 }

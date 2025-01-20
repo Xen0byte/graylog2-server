@@ -31,13 +31,20 @@ import type { SearchConfig } from 'components/search';
 import Select from 'components/common/Select/Select';
 import useSendTelemetry from 'logic/telemetry/useSendTelemetry';
 import 'moment-duration-format';
-import type { QuickAccessTimeRange } from 'components/configurations/QuickAccessTimeRangeForm';
-import QuickAccessTimeRangeForm from 'components/configurations/QuickAccessTimeRangeForm';
+import type { TimeRangePreset } from 'components/configurations/TimeRangePresetForm';
+import TimeRangePresetForm from 'components/configurations/TimeRangePresetForm';
 import generateId from 'logic/generateId';
-import QuickAccessTimeRangeOptionsSummary from 'components/configurations/QuickAccessTimeRangeOptionsSummary';
-import { onInitializingTimerange, onSubmittingTimerange } from 'views/components/TimerangeForForm';
+import TimeRangePresetOptionsSummary from 'components/configurations/TimeRangePresetOptionSummary';
+import { onInitializingTimerange } from 'views/components/TimerangeForForm';
 import useUserDateTime from 'hooks/useUserDateTime';
 import type { DateTime, DateTimeFormats } from 'util/DateTime';
+import { normalizeFromSearchBarForBackend } from 'views/logic/queries/NormalizeTimeRange';
+import { getPathnameWithoutId } from 'util/URLUtils';
+import { TELEMETRY_EVENT_TYPE } from 'logic/telemetry/Constants';
+import useMinimumRefreshInterval from 'views/hooks/useMinimumRefreshInterval';
+import Alert from 'components/bootstrap/Alert';
+import useLocation from 'routing/useLocation';
+import ReadableDuration from 'components/common/ReadableDuration';
 
 import TimeRangeOptionsForm from './TimeRangeOptionsForm';
 import TimeRangeOptionsSummary from './TimeRangeOptionsSummary';
@@ -46,9 +53,7 @@ const queryTimeRangeLimitValidator = (milliseconds: number) => milliseconds >= 1
 
 const surroundingTimeRangeValidator = (milliseconds: number) => milliseconds >= 1;
 
-function autoRefreshTimeRangeValidator(milliseconds: number) {
-  return milliseconds >= 1000;
-}
+const autoRefreshTimeRangeValidator = (minimumRefreshIntervalMS: number) => (milliseconds: number) => milliseconds >= 1000 && milliseconds >= minimumRefreshIntervalMS;
 
 const splitStringList = (stringList: string) => stringList.split(',').map((f) => f.trim()).filter((f) => f.length > 0);
 
@@ -56,7 +61,7 @@ const buildTimeRangeOptions = (options: { [x: string]: string; }) => Object.keys
 
 type Option = { period: string, description: string };
 
-const mapQuickAccessBEData = (items: Array<QuickAccessTimeRange>, formatTime: (time: DateTime, format?: DateTimeFormats) => string): Immutable.List<QuickAccessTimeRange> => Immutable.List(items.map(({ timerange, description, id }) => {
+const mapQuickAccessBEData = (items: Array<TimeRangePreset>, formatTime: (time: DateTime, format?: DateTimeFormats) => string): Immutable.List<TimeRangePreset> => Immutable.List(items.map(({ timerange, description, id }) => {
   const presetId = id ?? generateId();
 
   return { description, id: presetId, timerange: onInitializingTimerange(timerange, formatTime) };
@@ -64,7 +69,9 @@ const mapQuickAccessBEData = (items: Array<QuickAccessTimeRange>, formatTime: (t
 
 const SearchesConfig = () => {
   const { userTimezone, formatTime } = useUserDateTime();
-  const isLimitEnabled = (config) => moment.duration(config?.query_time_range_limit).asMilliseconds() > 0;
+  const isLimitEnabled = (config: { query_time_range_limit: number }) => moment.duration(config?.query_time_range_limit).asMilliseconds() > 0;
+  const { data: minimumRefreshInterval, isInitialLoading: isLoadingMinimumRefreshInterval } = useMinimumRefreshInterval();
+  const minimumRefreshIntervalMS = moment.duration(minimumRefreshInterval).asMilliseconds();
   const [showConfigModal, setShowConfigModal] = useState<boolean>(false);
   const [viewConfig, setViewConfig] = useState<SearchConfig | undefined>(undefined);
   const [formConfig, setFormConfig] = useState<SearchConfig | undefined>(undefined);
@@ -75,14 +82,17 @@ const SearchesConfig = () => {
   const [surroundingFilterFieldsUpdate, setSurroundingFilterFieldsUpdate] = useState<string | undefined>(undefined);
   const [analysisDisabledFieldsUpdate, setAnalysisDisabledFieldsUpdate] = useState<string | undefined>(undefined);
   const [defaultAutoRefreshOptionUpdate, setDefaultAutoRefreshOptionUpdate] = useState<string | undefined>(undefined);
-  const [quickAccessTimeRangePresetsUpdated, setQuickAccessTimeRangePresetsUpdated] = useState<Immutable.List<QuickAccessTimeRange>>(undefined);
+  const [timeRangePresetsUpdated, setTimeRangePresetsUpdated] = useState<Immutable.List<TimeRangePreset>>(undefined);
+  const [showCancelAfterSeconds, setShowCancelAfterSeconds] = useState(false);
   const sendTelemetry = useSendTelemetry();
+  const { pathname } = useLocation();
 
   useEffect(() => {
     ConfigurationsActions.list(ConfigurationType.SEARCHES_CLUSTER_CONFIG).then(() => {
       const config = getConfig(ConfigurationType.SEARCHES_CLUSTER_CONFIG, configuration);
       setViewConfig(config);
       setFormConfig(config);
+      setShowCancelAfterSeconds(!!config?.cancel_after_seconds);
     });
   }, [configuration]);
 
@@ -90,8 +100,8 @@ const SearchesConfig = () => {
     setFormConfig({ ...formConfig, [field]: newOptions });
   };
 
-  const onQuickAccessTimeRangePresetsUpdate = (data: Immutable.List<QuickAccessTimeRange>) => {
-    setQuickAccessTimeRangePresetsUpdated(data);
+  const onTimeRangePresetsUpdate = (data: Immutable.List<TimeRangePreset>) => {
+    setTimeRangePresetsUpdated(data);
   };
 
   const onSurroundingTimeRangeOptionsUpdate = (data: Array<Option>) => {
@@ -128,6 +138,23 @@ const SearchesConfig = () => {
     setFormConfig({ ...formConfig, query_time_range_limit: queryTimeRangeLimit });
   };
 
+  const onCancelAfterSecondsChanged = ({ target: { value } }: React.ChangeEvent<HTMLInputElement>) => {
+    setFormConfig({ ...formConfig, cancel_after_seconds: value });
+  };
+
+  const onCheckedCancelAfterSeconds = () => {
+    let cancelAfterSeconds: number | null;
+
+    if (showCancelAfterSeconds) {
+      cancelAfterSeconds = null;
+    } else {
+      cancelAfterSeconds = 30;
+    }
+
+    setShowCancelAfterSeconds((cur) => !cur);
+    setFormConfig({ ...formConfig, cancel_after_seconds: cancelAfterSeconds });
+  };
+
   const openModal = () => {
     setShowConfigModal(true);
   };
@@ -139,7 +166,7 @@ const SearchesConfig = () => {
     setAnalysisDisabledFieldsUpdate(undefined);
     setAutoRefreshTimeRangeOptionsUpdate(undefined);
     setDefaultAutoRefreshOptionUpdate(undefined);
-    setQuickAccessTimeRangePresetsUpdated(undefined);
+    setTimeRangePresetsUpdated(undefined);
   };
 
   const handleModalCancel = () => {
@@ -151,8 +178,8 @@ const SearchesConfig = () => {
   const saveConfig = () => {
     const update = { ...formConfig };
 
-    sendTelemetry('form_submit', {
-      app_pathname: 'configurations',
+    sendTelemetry(TELEMETRY_EVENT_TYPE.CONFIGURATIONS.SEARCHES_UPDATED, {
+      app_pathname: getPathnameWithoutId(pathname),
       app_section: 'search',
       app_action_value: 'configuration-save',
     });
@@ -167,12 +194,12 @@ const SearchesConfig = () => {
       setRelativeTimeRangeOptionsUpdate(undefined);
     }
 
-    if (quickAccessTimeRangePresetsUpdated) {
-      update.quick_access_timerange_presets = quickAccessTimeRangePresetsUpdated.toArray().map(({ description, timerange, id }) => ({
-        description, timerange: onSubmittingTimerange(timerange, userTimezone), id,
+    if (timeRangePresetsUpdated) {
+      update.quick_access_timerange_presets = timeRangePresetsUpdated.toArray().map(({ description, timerange, id }) => ({
+        description, timerange: normalizeFromSearchBarForBackend(timerange, userTimezone), id,
       }));
 
-      setQuickAccessTimeRangePresetsUpdated(undefined);
+      setTimeRangePresetsUpdated(undefined);
     }
 
     if (surroundingTimeRangeOptionsUpdate) {
@@ -217,8 +244,8 @@ const SearchesConfig = () => {
     });
   };
 
-  const quickAccessTimeRangePresetsFromBE = useMemo(() => mapQuickAccessBEData(formConfig?.quick_access_timerange_presets ?? [], formatTime), [formConfig?.quick_access_timerange_presets, formatTime]);
-  const quickAccessTimeRangePresets = useMemo(() => quickAccessTimeRangePresetsUpdated ?? quickAccessTimeRangePresetsFromBE, [quickAccessTimeRangePresetsFromBE, quickAccessTimeRangePresetsUpdated]);
+  const timeRangePresetsFromBE = useMemo(() => mapQuickAccessBEData(formConfig?.quick_access_timerange_presets ?? [], formatTime), [formConfig?.quick_access_timerange_presets, formatTime]);
+  const timeRangePresets = useMemo(() => timeRangePresetsUpdated ?? timeRangePresetsFromBE, [timeRangePresetsFromBE, timeRangePresetsUpdated]);
 
   if (!viewConfig) {
     return <Spinner />;
@@ -231,6 +258,8 @@ const SearchesConfig = () => {
   const defaultAutoRefreshOption = (config) => (autoRefreshOptions(config).find((option) => option.period === formDefaultAutoRefreshOptionUpdate(config))
     ? formDefaultAutoRefreshOptionUpdate(config)
     : autoRefreshOptions[0]?.period);
+
+  const cancellationTimeout = (config) => (config.cancel_after_seconds ? `${config.cancel_after_seconds} seconds` : 'disabled');
 
   return (
     <div>
@@ -245,10 +274,18 @@ const SearchesConfig = () => {
         </dd>
       </dl>
 
+      <dl className="deflist">
+        <dt>Cancellation timeout</dt>
+        <dd>{cancellationTimeout(viewConfig)}</dd>
+        <dd>The time in seconds per widget after which search execution will be canceled automatically.
+          This minimizes the amount of executed searches and improves performance.
+        </dd>
+      </dl>
+
       <Row>
         <Col md={4}>
-          <strong>Quick access time range options</strong>
-          <QuickAccessTimeRangeOptionsSummary options={quickAccessTimeRangePresetsFromBE.toArray()} />
+          <strong>Search Time Range Presets</strong>
+          <TimeRangePresetOptionsSummary options={timeRangePresetsFromBE.toArray()} />
           <strong>Surrounding time range options</strong>
           <TimeRangeOptionsSummary options={viewConfig.surrounding_timerange_options} />
         </Col>
@@ -308,11 +345,31 @@ const SearchesConfig = () => {
                                 duration={formConfig.query_time_range_limit}
                                 update={onUpdate('query_time_range_limit')}
                                 label="Query time range limit (ISO8601 Duration)"
-                                help={'The maximum time range for searches. (i.e. "P30D" for 30 days, "PT24H" for 24 hours)'}
+                                help='The maximum time range for searches. (i.e. "P30D" for 30 days, "PT24H" for 24 hours)'
                                 validator={queryTimeRangeLimitValidator}
                                 required />
             )}
-            <QuickAccessTimeRangeForm options={quickAccessTimeRangePresets} onUpdate={onQuickAccessTimeRangePresetsUpdate} />
+            <label htmlFor="cancel_after_seconds_checkbox">Query Cancellation Timeout</label>
+            <Input id="cancel_after_seconds_checkbox"
+                   type="checkbox"
+                   label="Enable query cancellation timeout"
+                   name="cancel_after_seconds_checkbox"
+                   checked={showCancelAfterSeconds}
+                   onChange={onCheckedCancelAfterSeconds}
+                   help="The time in seconds per widget after which search execution will be canceled automatically. This minimizes the amount of executed searches and improves performance." />
+            {showCancelAfterSeconds && (
+              <Input id="cancel_after_seconds"
+                     type="number"
+                     label="Cancellation timeout"
+                     name="cancel_after_seconds"
+                     min="1"
+                     step="1"
+                     pattern="\d+"
+                     required
+                     value={formConfig.cancel_after_seconds}
+                     onChange={onCancelAfterSecondsChanged} />
+            )}
+            <TimeRangePresetForm options={timeRangePresets} onUpdate={onTimeRangePresetsUpdate} />
             <TimeRangeOptionsForm options={surroundingTimeRangeOptionsUpdate || buildTimeRangeOptions(formConfig.surrounding_timerange_options)}
                                   update={onSurroundingTimeRangeOptionsUpdate}
                                   validator={surroundingTimeRangeValidator}
@@ -338,7 +395,7 @@ const SearchesConfig = () => {
                    required />
             <TimeRangeOptionsForm options={autoRefreshOptions(formConfig)}
                                   update={onAutoRefreshTimeRangeOptionsUpdate}
-                                  validator={autoRefreshTimeRangeValidator}
+                                  validator={autoRefreshTimeRangeValidator(minimumRefreshIntervalMS)}
                                   title="Auto-Refresh Interval Options"
                                   help={<span>Configure the available options for the <strong>auto-refresh</strong> interval selector as <strong>ISO8601 duration</strong></span>} />
             <Input label="Default Auto-Refresh Option"
@@ -354,6 +411,12 @@ const SearchesConfig = () => {
                       onChange={onAutoRefreshDefaultOptionsUpdate}
                       value={defaultAutoRefreshOption(formConfig)} />
             </Input>
+            {!isLoadingMinimumRefreshInterval && (
+              <Alert bsStyle="warning">
+                Please note, a minimum refresh interval of <ReadableDuration duration={minimumRefreshInterval} /> ({minimumRefreshInterval}) has been configured in the graylog.conf.
+                Only intervals which are equal or above the minimum can be used.
+              </Alert>
+            )}
           </fieldset>
         </BootstrapModalForm>
       )}

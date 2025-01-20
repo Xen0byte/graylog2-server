@@ -17,17 +17,15 @@
 package org.graylog.events.search;
 
 import com.google.auto.value.AutoValue;
-import com.google.common.collect.ImmutableSet;
+import jakarta.inject.Inject;
 import org.graylog.events.processor.EventProcessorException;
 import org.graylog.plugins.views.search.IndexRangeContainsOneOfStreams;
 import org.graylog.plugins.views.search.Parameter;
-import org.graylog.plugins.views.search.Query;
-import org.graylog.plugins.views.search.SearchJob;
-import org.graylog.plugins.views.search.elasticsearch.ElasticsearchQueryString;
+import org.graylog.plugins.views.search.ParameterProvider;
 import org.graylog.plugins.views.search.elasticsearch.QueryStringDecorators;
 import org.graylog.plugins.views.search.errors.EmptyParameterError;
 import org.graylog.plugins.views.search.errors.SearchException;
-import org.graylog2.database.NotFoundException;
+import org.graylog.plugins.views.search.searchfilters.model.UsedSearchFilter;
 import org.graylog2.indexer.ranges.IndexRange;
 import org.graylog2.indexer.ranges.IndexRangeService;
 import org.graylog2.indexer.results.ResultMessage;
@@ -38,8 +36,6 @@ import org.graylog2.streams.StreamService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.inject.Inject;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.SortedSet;
@@ -56,17 +52,17 @@ public class MoreSearch {
 
     private final StreamService streamService;
     private final IndexRangeService indexRangeService;
-    private final QueryStringDecorators esQueryDecorators;
+    private final QueryStringDecorators queryDecorators;
     private final MoreSearchAdapter moreSearchAdapter;
 
     @Inject
     public MoreSearch(StreamService streamService,
                       IndexRangeService indexRangeService,
-                      QueryStringDecorators esQueryDecorators,
+                      QueryStringDecorators queryDecorators,
                       MoreSearchAdapter moreSearchAdapter) {
         this.streamService = streamService;
         this.indexRangeService = indexRangeService;
-        this.esQueryDecorators = esQueryDecorators;
+        this.queryDecorators = queryDecorators;
         this.moreSearchAdapter = moreSearchAdapter;
     }
 
@@ -87,10 +83,21 @@ public class MoreSearch {
         checkArgument(forbiddenSourceStreams != null, "forbiddenSourceStreams cannot be null");
 
         final Sorting.Direction sortDirection = parameters.sortDirection() == EventsSearchParameters.SortDirection.ASC ? Sorting.Direction.ASC : Sorting.Direction.DESC;
-        final Sorting sorting = new Sorting(parameters.sortBy(), sortDirection);
+        final Sorting sorting = parameters.sortUnmappedType()
+                .map(unmappedType -> new Sorting(parameters.sortBy(), sortDirection, unmappedType))
+                .orElse(new Sorting(parameters.sortBy(), sortDirection));
         final String queryString = parameters.query().trim();
         final Set<String> affectedIndices = getAffectedIndices(eventStreams, parameters.timerange());
 
+        if (affectedIndices == null || affectedIndices.isEmpty()) {
+            return Result.builder()
+                    .resultsCount(0)
+                    .results(List.of())
+                    .usedIndexNames(Set.of())
+                    .duration(0)
+                    .executedQuery(queryString)
+                    .build();
+        }
         return moreSearchAdapter.eventSearch(queryString, parameters.timerange(), affectedIndices, sorting, parameters.page(), parameters.perPage(), eventStreams, filterString, forbiddenSourceStreams);
     }
 
@@ -103,7 +110,7 @@ public class MoreSearch {
                     .map(IndexRange::indexName)
                     .collect(Collectors.toSet());
         } else {
-            final Set<Stream> streams = loadStreams(streamIds);
+            final Set<Stream> streams = streamService.loadByIds(streamIds);
             final IndexRangeContainsOneOfStreams indexRangeContainsOneOfStreams = new IndexRangeContainsOneOfStreams();
             return indexRanges.stream()
                     .filter(ir -> indexRangeContainsOneOfStreams.test(ir, streams))
@@ -125,15 +132,18 @@ public class MoreSearch {
      *
      * @param queryString    the search query string
      * @param streams        the set of streams to search in
+     * @param filters        the set of search filters to search with
      * @param timeRange      the time range for the search
      * @param batchSize      the number of documents to retrieve at once
      * @param resultCallback the callback that gets executed for each batch
      */
-    public void scrollQuery(String queryString, Set<String> streams, Set<Parameter> queryParameters, TimeRange timeRange, int batchSize, ScrollCallback resultCallback) throws EventProcessorException {
+    public void scrollQuery(String queryString, Set<String> streams, List<UsedSearchFilter> filters,
+                            Set<Parameter> queryParameters, TimeRange timeRange, int batchSize,
+                            ScrollCallback resultCallback) throws EventProcessorException {
         final Set<String> affectedIndices = getAffectedIndices(streams, timeRange);
 
         try {
-            queryString = decorateQuery(queryParameters, timeRange, queryString);
+            queryString = decorateQuery(queryString, queryParameters);
         } catch (SearchException e) {
             if (e.error() instanceof EmptyParameterError) {
                 LOG.debug("Empty parameter from lookup table. Assuming non-matching query. Error: {}", e.getMessage());
@@ -142,46 +152,20 @@ public class MoreSearch {
             throw e;
         }
 
-        moreSearchAdapter.scrollEvents(queryString, timeRange, affectedIndices, streams, batchSize, resultCallback::call);
-    }
-
-    public Set<Stream> loadStreams(Set<String> streamIds) {
-        // TODO: Use method from `StreamService` which loads a collection of ids (when implemented) to prevent n+1.
-        // Track https://github.com/Graylog2/graylog2-server/issues/4897 for progress.
-        Set<Stream> streams = new HashSet<>();
-        for (String streamId : streamIds) {
-            try {
-                Stream load = streamService.load(streamId);
-                streams.add(load);
-            } catch (NotFoundException e) {
-                LOG.debug("Failed to load stream <{}>", streamId);
-            }
-        }
-        return streams;
+        moreSearchAdapter.scrollEvents(queryString, timeRange, affectedIndices, streams, filters, batchSize, resultCallback::call);
     }
 
     /**
-     * Substitute query string parameters using ESQueryDecorators.
+     * Substitute query string parameters using {@link QueryStringDecorators}.
      */
-    private String decorateQuery(Set<Parameter> queryParameters, TimeRange timeRange, String queryString) {
-        // TODO
-        // We need to create a dummy SearchJob and a Query to use the decorator API.
-        // Maybe the decorate call could be refactored to make this easier.
-        org.graylog.plugins.views.search.Search search = org.graylog.plugins.views.search.Search.builder()
-                .parameters(ImmutableSet.copyOf(queryParameters))
-                .build();
-        SearchJob searchJob = new SearchJob("1234", search, "events backend");
-        Query dummyQuery = Query.builder()
-                .id("123")
-                .timerange(timeRange)
-                .query(ElasticsearchQueryString.of(queryString))
-                .build();
-        return esQueryDecorators.decorate(queryString, searchJob, dummyQuery);
+    private String decorateQuery(String queryString, Set<Parameter> queryParameters) {
+        return queryDecorators.decorate(queryString, ParameterProvider.of(queryParameters));
     }
 
 
     /**
      * Helper to perform basic Lucene escaping of query string values
+     *
      * @param searchString search string which may contain unescaped reserved characters
      * @return String where those characters that Lucene expects to be escaped are escaped by a
      * preceding <code>\</code>

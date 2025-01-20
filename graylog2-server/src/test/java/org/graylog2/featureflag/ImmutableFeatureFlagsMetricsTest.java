@@ -17,7 +17,8 @@
 package org.graylog2.featureflag;
 
 import com.codahale.metrics.MetricRegistry;
-import org.apache.groovy.util.Maps;
+import org.graylog2.CommonNodeConfiguration;
+import org.graylog2.GraylogNodeConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -42,6 +43,8 @@ public class ImmutableFeatureFlagsMetricsTest {
     @Mock
     FeatureFlagsResources resources;
     MetricRegistry metricRegistry;
+    GraylogNodeConfiguration nodeConfiguration = new CommonNodeConfiguration() {
+    };
 
     @BeforeEach
     void setUp() {
@@ -87,19 +90,19 @@ public class ImmutableFeatureFlagsMetricsTest {
 
     @Test
     void testInvalidFeatureFlagNameDoNotHaveMetrics() throws IOException {
-        createFeatureFlags(Maps.of("ignore.metric", "on"));
+        createFeatureFlags(Map.of("ignore.metric", "on"));
 
         assertThat(metricRegistry.getCounters()).isEmpty();
         assertThat(metricRegistry.getGauges()).isEmpty();
     }
 
     private FeatureFlags createFeatureFlags() throws IOException {
-        return createFeatureFlags(Maps.of(FEATURE, STATE));
+        return createFeatureFlags(Map.of(FEATURE, STATE));
     }
 
     private FeatureFlags createFeatureFlags(Map<String, String> flags) throws IOException {
         given(resources.defaultProperties(any())).willReturn(flags);
-        return new FeatureFlagsFactory().createImmutableFeatureFlags(resources, "file", "file", metricRegistry);
+        return new FeatureFlagsFactory().createImmutableFeatureFlags(resources, "file", "file", metricRegistry, nodeConfiguration);
     }
 
     private long getFeatureFlagUsedCount() {

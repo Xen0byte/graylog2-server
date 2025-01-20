@@ -1,28 +1,36 @@
-Upgrading to Graylog 5.2.x
+Upgrading to Graylog 6.2.x
 ==========================
-
-## New Functionality
 
 ## Breaking Changes
 
-## Deprecation and Change in Functionality of GreyNoise Data Adapters
+### Plugins
 
-- GreyNoise Community IP Lookup Data Adapters have been marked as deprecated. Existing Data Adapters can no longer be
-  started or lookups performed.
-- GreyNoise Full IP Lookup [Enterprise] Data Adapter can no longer be used with a free GreyNoise Community API tokens.
-- GreyNoise Quick IP Lookup Data Adapter can no longer be used with a free GreyNoise Community API tokens.
+Adjustment of `enterpriseWidgets` web interface plugin. The `editComponent` attribute now no longer has a `onSubmit` prop.
+Before this change the prop had to be called to close the widget edit mode. Now it is enough to call `applyAllWidgetChanges` from the `WidgetEditApplyAllChangesContext`.
+Alternatively the `SaveOrCancelButtons` component can be used in the edit component for custom widgets. It renders a cancel and submit button and calls `applyAllWidgetChanges` on submit.
+
+## Configuration File Changes
+
+| Option        | Action     | Description                                    |
+|---------------|------------|------------------------------------------------|
+| `tbd`         | **added**  |                                                |
+
+## Default Configuration Changes
+
+- tbd
 
 ## Java API Changes
+
 The following Java Code API changes have been made.
 
-| File/method                   | Description                                                      |
-|-------------------------------|------------------------------------------------------------------|
-| `ExampleClass#exampleFuntion` | TODO placeholder comment                                         |
-
+| File/method                                    | Description |
+|------------------------------------------------|-------------|
+| `org.graylog.scheduler.JobSchedule#toDBUpdate` | removed     |
 
 ## REST API Endpoint Changes
+
 The following REST API changes have been made.
 
-| Endpoint                                              | Description                               |
-|-------------------------------------------------------|-------------------------------------------|
-| `PUT /example/placeholder`                            | TODO placeholder comment                  |
+| Endpoint                                         | Description                                                                                                                     |
+|--------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
+| `GET /tbd`                                       | tbd                                                                                                                             |

@@ -24,7 +24,8 @@ import org.graylog.plugins.views.search.elasticsearch.ElasticsearchQueryString;
 import org.graylog.plugins.views.search.elasticsearch.QueryStringDecorators;
 import org.graylog.plugins.views.search.filter.QueryStringFilter;
 
-import javax.inject.Inject;
+import jakarta.inject.Inject;
+
 import java.util.stream.Collectors;
 
 public class DecorateQueryStringsNormalizer implements SearchNormalizer {
@@ -37,6 +38,10 @@ public class DecorateQueryStringsNormalizer implements SearchNormalizer {
 
     @Override
     public Query normalizeQuery(final Query query, final ParameterProvider parameterProvider) {
+        // this only makes sense for ElasticsearchQueryString instances, don't touch any other type
+        if (!(query.query() instanceof ElasticsearchQueryString)) {
+            return query;
+        }
         return query.toBuilder()
                 .query(ElasticsearchQueryString.of(this.queryStringDecorators.decorate(query.query().queryString(), parameterProvider, query)))
                 .filter(normalizeFilter(query.filter(), query, parameterProvider))

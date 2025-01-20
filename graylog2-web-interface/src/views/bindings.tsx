@@ -43,7 +43,7 @@ import EventHandler from 'views/logic/searchtypes/events/EventHandler';
 import Widget from 'views/logic/widgets/Widget';
 import AggregationWidget from 'views/logic/aggregationbuilder/AggregationWidget';
 import MessagesWidget from 'views/logic/widgets/MessagesWidget';
-import DataTable from 'views/components/datatable/DataTable';
+import DataTable from 'views/components/datatable';
 import FieldStatisticsHandler from 'views/logic/fieldactions/FieldStatisticsHandler';
 import ExcludeFromQueryHandler from 'views/logic/valueactions/ExcludeFromQueryHandler';
 import { isFunction } from 'views/logic/aggregationbuilder/Series';
@@ -55,7 +55,7 @@ import {
   NewDashboardPage,
   StreamSearchPage,
   EventDefinitionReplaySearchPage,
-  EventReplaySearchPage,
+  EventReplaySearchPage, BulkEventReplayPage,
 } from 'views/pages';
 import AddMessageCountActionHandler, { CreateMessageCount } from 'views/logic/fieldactions/AddMessageCountActionHandler';
 import AddMessageTableActionHandler, { CreateMessagesWidget } from 'views/logic/fieldactions/AddMessageTableActionHandler';
@@ -98,7 +98,18 @@ import ScatterVisualization from 'views/components/visualizations/scatter/Scatte
 import Icon from 'components/common/Icon';
 import viewsReducers from 'views/viewsReducers';
 import CreateEventDefinition from 'views/logic/valueactions/createEventDefinition/CreateEventDefinition';
-import ShowAssetInformation from 'views/logic/valueactions/ShowAssetInformation';
+import ChangeFieldType, {
+  ChangeFieldTypeHelp,
+  isChangeFieldTypeEnabled,
+} from 'views/logic/fieldactions/ChangeFieldType/ChangeFieldType';
+import AddEventsWidgetActionHandler, { CreateEventsWidget } from 'views/logic/widgets/events/AddEventsWidgetActionHandler';
+import EventsListConfigGenerator from 'views/logic/searchtypes/events/EventsListConfigGenerator';
+import EventsWidgetEdit from 'views/components/widgets/events/EventsWidgetEdit';
+import EventsWidget from 'views/logic/widgets/events/EventsWidget';
+import eventsAttributes from 'views/components/widgets/events/eventsAttributes';
+import WarmTierQueryValidation from 'views/components/searchbar/queryvalidation/WarmTierQueryValidation';
+import ExportMessageWidgetAction from 'views/components/widgets/ExportWidgetAction/ExportMessageWidgetAction';
+import ExportWidgetAction from 'views/components/widgets/ExportWidgetAction/ExportWidgetAction';
 
 import type { ActionHandlerArguments } from './components/actions/ActionHandler';
 import NumberVisualizationConfig from './logic/aggregationbuilder/visualizations/NumberVisualizationConfig';
@@ -110,9 +121,12 @@ import ValueParameter from './logic/parameters/ValueParameter';
 import MessageConfigGenerator from './logic/searchtypes/messages/MessageConfigGenerator';
 import UnknownWidget from './components/widgets/UnknownWidget';
 import NewSearchRedirectPage from './pages/NewSearchRedirectPage';
+import EventsVisualization from './components/widgets/events/EventsVisualization';
+import eventsFilterComponents from './components/widgets/events/filters/filterComponents';
 
 Widget.registerSubtype(AggregationWidget.type, AggregationWidget);
 Widget.registerSubtype(MessagesWidget.type, MessagesWidget);
+Widget.registerSubtype(EventsWidget.type, EventsWidget);
 VisualizationConfig.registerSubtype(WorldMapVisualization.type, WorldMapVisualizationConfig);
 VisualizationConfig.registerSubtype(BarVisualization.type, BarVisualizationConfig);
 VisualizationConfig.registerSubtype(NumberVisualization.type, NumberVisualizationConfig);
@@ -126,26 +140,6 @@ Parameter.registerSubtype(ValueParameter.type, ValueParameter);
 Parameter.registerSubtype(LookupTableParameter.type, LookupTableParameter);
 
 const isAnalysisDisabled = (field: string, analysisDisabledFields: string[] = []) => analysisDisabledFields.includes(field);
-
-const GIMSchemaAssetLookupFields = [
-  'source_hostname',
-  'source_ip',
-  'source_ipv6',
-  'source_nat_ip',
-  'destination_hostname',
-  'destination_ip',
-  'destination_nat_ip',
-  'host_hostname',
-  'host_ip',
-  'host_ipv6',
-  'host_mac',
-  'vendor_private_ip',
-  'vendor_private_ipv6',
-  'vendor_public_ip',
-  'vendor_public_ipv6',
-  'event_observer_ip',
-  'event_source',
-];
 
 const exports: PluginExports = {
   pages: {
@@ -167,15 +161,15 @@ const exports: PluginExports = {
     { path: Routes.unqualified.stream_search(':streamId'), component: StreamSearchPage, parentComponent: App },
     { path: extendedSearchPath, component: NewSearchPage, parentComponent: App },
     { path: showViewsPath, component: ShowViewPage, parentComponent: App },
-    { path: Routes.ALERTS.replay_search(':alertId'), component: EventReplaySearchPage, parentComponent: App },
-    { path: Routes.ALERTS.DEFINITIONS.replay_search(':definitionId'), component: EventDefinitionReplaySearchPage, parentComponent: App },
+    { path: Routes.unqualified.ALERTS.replay_search(':alertId'), component: EventReplaySearchPage, parentComponent: App },
+    { path: Routes.unqualified.ALERTS.BULK_REPLAY_SEARCH, component: BulkEventReplayPage, parentComponent: App },
+    { path: Routes.unqualified.ALERTS.DEFINITIONS.replay_search(':definitionId'), component: EventDefinitionReplaySearchPage, parentComponent: App },
   ],
   enterpriseWidgets: [
     {
       type: 'MESSAGES',
       displayName: 'Message List',
       defaultHeight: 5,
-      reportStyle: () => ({ width: 800 }),
       defaultWidth: 6,
       // TODO: Subtyping needs to be taken into account
       visualizationComponent: MessageList as unknown as React.ComponentType<WidgetComponentProps>,
@@ -191,7 +185,6 @@ const exports: PluginExports = {
       displayName: 'Results',
       defaultHeight: 4,
       defaultWidth: 4,
-      reportStyle: () => ({ width: 600 }),
       visualizationComponent: AggregationBuilder,
       editComponent: AggregationWizard,
       hasEditSubmitButton: true,
@@ -216,6 +209,19 @@ const exports: PluginExports = {
 
         return AggregationWidget.defaultTitle;
       },
+    },
+    {
+      type: 'EVENTS',
+      displayName: 'Events',
+      defaultHeight: 4,
+      defaultWidth: 6,
+      hasEditSubmitButton: true,
+      visualizationComponent: EventsVisualization,
+      editComponent: EventsWidgetEdit,
+      searchTypes: EventsListConfigGenerator,
+      titleGenerator: () => EventsWidget.defaultTitle,
+      needsControlledHeight: () => false,
+      searchResultTransformer: (data: Array<unknown>) => data?.[0],
     },
     {
       type: 'default',
@@ -312,6 +318,14 @@ const exports: PluginExports = {
       isEnabled: () => true,
       resetFocus: false,
     },
+    {
+      type: 'change-field-type',
+      title: 'Change field type',
+      isEnabled: isChangeFieldTypeEnabled,
+      resetFocus: false,
+      component: ChangeFieldType,
+      help: ChangeFieldTypeHelp,
+    },
   ],
   valueActions: filterCloudValueActions([
     {
@@ -363,19 +377,12 @@ const exports: PluginExports = {
       resetFocus: false,
       component: CreateEventDefinition,
     },
-    {
-      type: 'show-asset-information',
-      title: 'Show asset information',
-      isHidden: ({ field }: ActionHandlerArguments) => (GIMSchemaAssetLookupFields.indexOf(field) === -1),
-      resetFocus: false,
-      component: ShowAssetInformation,
-    },
   ], ['create-extractor']),
   visualizationTypes: visualizationBindings,
   widgetCreators: [{
     title: 'Message Count',
     func: CreateMessageCount,
-    icon: () => <Icon name="hashtag" />,
+    icon: () => <Icon name="tag" />,
   }, {
     title: 'Message Table',
     func: CreateMessagesWidget,
@@ -383,7 +390,11 @@ const exports: PluginExports = {
   }, {
     title: 'Custom Aggregation',
     func: CreateCustomAggregation,
-    icon: () => <Icon name="chart-column" />,
+    icon: () => <Icon name="monitoring" />,
+  }, {
+    title: 'Events Overview',
+    func: CreateEventsWidget,
+    icon: () => <Icon name="report" type="regular" />,
   }],
   creators: [
     {
@@ -400,6 +411,11 @@ const exports: PluginExports = {
       type: 'generic',
       title: 'Aggregation',
       func: AddCustomAggregation,
+    },
+    {
+      type: 'events' as const,
+      title: 'Events Overview',
+      func: AddEventsWidgetActionHandler,
     },
   ],
   'views.completers': [
@@ -438,7 +454,11 @@ const exports: PluginExports = {
       sort: 1,
     },
   ],
+  'views.components.widgets.events.filterComponents': eventsFilterComponents,
+  'views.components.widgets.events.attributes': eventsAttributes,
   'views.reducers': viewsReducers,
+  'views.elements.validationErrorExplanation': [WarmTierQueryValidation],
+  'views.widgets.actions': [ExportMessageWidgetAction, ExportWidgetAction],
 };
 
 export default exports;

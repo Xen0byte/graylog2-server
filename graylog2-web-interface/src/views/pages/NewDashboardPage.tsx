@@ -16,7 +16,6 @@
  */
 import * as React from 'react';
 import { useMemo } from 'react';
-import type { Location } from 'react-router-dom';
 
 import useLocation from 'routing/useLocation';
 import viewTransformer from 'views/logic/views/ViewTransformer';
@@ -24,20 +23,21 @@ import View from 'views/logic/views/View';
 import { IfPermitted } from 'components/common';
 import ViewGenerator from 'views/logic/views/ViewGenerator';
 import useCreateSearch from 'views/hooks/useCreateSearch';
+import UpdateSearchForWidgets from 'views/logic/views/UpdateSearchForWidgets';
 
 import SearchPage from './SearchPage';
 
-type LocationState = Location & { state: {
+export type NewDashboardPageState = {
   view?: View,
-} };
+};
 
 const NewDashboardPage = () => {
-  const location: LocationState = useLocation();
+  const location = useLocation<NewDashboardPageState>();
   const searchView = location?.state?.view;
 
   const viewPromise = useMemo(() => (searchView?.search
-    ? Promise.resolve(viewTransformer(searchView))
-    : ViewGenerator(View.Type.Dashboard, undefined)),
+    ? Promise.resolve(UpdateSearchForWidgets(viewTransformer(searchView)))
+    : ViewGenerator({ type: View.Type.Dashboard })),
   // This should be run only once upon mount on purpose.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   []);

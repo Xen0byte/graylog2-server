@@ -16,20 +16,17 @@
  */
 import * as React from 'react';
 import { useCallback, useContext, useMemo, useState } from 'react';
-import PropTypes from 'prop-types';
 import styled from 'styled-components';
 
-import { getBasePathname } from 'util/URLUtils';
+import { getPathnameWithoutId } from 'util/URLUtils';
 import type { BackendWidgetPosition, WidgetResults, GetState } from 'views/types';
 import { widgetDefinition } from 'views/logic/Widgets';
-import { RefreshActions } from 'views/stores/RefreshStore';
-import WidgetModel from 'views/logic/widgets/Widget';
+import type WidgetModel from 'views/logic/widgets/Widget';
 import type WidgetPosition from 'views/logic/widgets/WidgetPosition';
 import type { Rows } from 'views/logic/searchtypes/pivot/PivotHandler';
 import type { AbsoluteTimeRange } from 'views/logic/queries/Query';
 import WidgetFocusContext from 'views/components/contexts/WidgetFocusContext';
 import TimerangeInfo from 'views/components/widgets/TimerangeInfo';
-import IfDashboard from 'views/components/dashboard/IfDashboard';
 import type WidgetConfig from 'views/logic/widgets/WidgetConfig';
 import type { FieldTypeMappingsList } from 'views/logic/fieldtypes/types';
 import useWidgetResults from 'views/components/useWidgetResults';
@@ -42,6 +39,13 @@ import { selectActiveQuery } from 'views/logic/slices/viewSelectors';
 import { setTitle } from 'views/logic/slices/titlesActions';
 import useSendTelemetry from 'logic/telemetry/useSendTelemetry';
 import useLocation from 'routing/useLocation';
+import { TELEMETRY_EVENT_TYPE } from 'logic/telemetry/Constants';
+import useAutoRefresh from 'views/hooks/useAutoRefresh';
+import useViewType from 'views/hooks/useViewType';
+import View from 'views/logic/views/View';
+import IfDashboard from 'views/components/dashboard/IfDashboard';
+import FullSizeContainer from 'views/components/aggregationbuilder/FullSizeContainer';
+import type WidgetType from 'views/logic/widgets/Widget';
 
 import WidgetFrame from './WidgetFrame';
 import WidgetHeader from './WidgetHeader';
@@ -51,13 +55,14 @@ import ErrorWidget from './ErrorWidget';
 import WidgetColorContext from './WidgetColorContext';
 import WidgetErrorBoundary from './WidgetErrorBoundary';
 import WidgetActionsMenu from './WidgetActionsMenu';
+import WidgetWarmTierAlert from './WidgetWarmTierAlert';
 
 import InteractiveContext from '../contexts/InteractiveContext';
 
 export type Props = {
   id: string,
   widget: WidgetModel,
-  editing: boolean,
+  editing?: boolean
   title: string,
   position: WidgetPosition,
   onPositionsChange: (position: BackendWidgetPosition) => void,
@@ -118,18 +123,24 @@ const Visualization = ({
     const { config, filter } = widget;
 
     return (
-      <VisComponent config={config}
-                    data={data as WidgetResults}
-                    editing={editing}
-                    fields={fields}
-                    filter={filter}
-                    queryId={queryId}
-                    onConfigChange={onWidgetConfigChange}
-                    setLoadingState={setLoadingState}
-                    title={title}
-                    toggleEdit={onToggleEdit}
-                    type={widget.type}
-                    id={id} />
+      <FullSizeContainer>
+        {({ height, width }) => (
+          <VisComponent config={config}
+                        data={data as WidgetResults}
+                        editing={editing}
+                        fields={fields}
+                        filter={filter}
+                        queryId={queryId}
+                        onConfigChange={onWidgetConfigChange}
+                        setLoadingState={setLoadingState}
+                        title={title}
+                        toggleEdit={onToggleEdit}
+                        type={widget.type}
+                        id={id}
+                        height={height}
+                        width={width} />
+        )}
+      </FullSizeContainer>
     );
   }
 
@@ -142,13 +153,14 @@ type EditWrapperProps = {
   editing: boolean,
   fields: FieldTypeMappingsList,
   id: string,
-  onToggleEdit: () => void,
   onCancelEdit: () => void,
+  onToggleEdit: () => void,
   onWidgetConfigChange: (newWidgetConfig: WidgetConfig) => void,
+  showQueryControls?: boolean,
   type: string,
 };
 
-const EditWrapper = ({
+export const EditWrapper = ({
   children,
   config,
   editing,
@@ -158,18 +170,31 @@ const EditWrapper = ({
   onCancelEdit,
   onWidgetConfigChange,
   type,
+  showQueryControls,
 }: EditWrapperProps) => {
   const EditComponent = useMemo(() => _editComponentForType(type), [type]);
   const hasOwnSubmitButton = _hasOwnEditSubmitButton(type);
+  const dispatch = useAppDispatch();
+  const onSubmitEdit = useCallback((newWidget: WidgetType, hasChanges: boolean) => {
+    if (hasChanges) {
+      return dispatch(updateWidget(newWidget.id, newWidget)).then(() => onToggleEdit());
+    }
+
+    onToggleEdit();
+
+    return Promise.resolve();
+  }, [dispatch, onToggleEdit]);
 
   return editing ? (
-    <EditWidgetFrame onSubmit={onToggleEdit} onCancel={onCancelEdit} displaySubmitActions={!hasOwnSubmitButton}>
+    <EditWidgetFrame onSubmit={onSubmitEdit}
+                     onCancel={onCancelEdit}
+                     displaySubmitActions={!hasOwnSubmitButton}
+                     showQueryControls={showQueryControls}>
       <EditComponent config={config}
                      fields={fields}
                      editing={editing}
                      id={id}
                      type={type}
-                     onSubmit={onToggleEdit}
                      onCancel={onCancelEdit}
                      onChange={onWidgetConfigChange}>
         {children}
@@ -184,8 +209,10 @@ const setWidgetTitle = (widgetId: string, newTitle: string) => async (dispatch: 
   return dispatch(setTitle(activeQuery, 'widget', widgetId, newTitle));
 };
 
-const Widget = ({ id, editing, widget, title, position, onPositionsChange }: Props) => {
+const Widget = ({ id, editing = false, widget, title, position, onPositionsChange }: Props) => {
+  const viewType = useViewType();
   const fields = useQueryFieldTypes();
+  const { stopAutoRefresh } = useAutoRefresh();
   const [loading, setLoading] = useState(false);
   const [oldWidget, setOldWidget] = useState(editing ? widget : undefined);
   const { focusedWidget, setWidgetEditing, unsetWidgetEditing } = useContext(WidgetFocusContext);
@@ -193,9 +220,11 @@ const Widget = ({ id, editing, widget, title, position, onPositionsChange }: Pro
   const sendTelemetry = useSendTelemetry();
   const { pathname } = useLocation();
 
+  const isDashboard = viewType === View.Type.Dashboard;
+
   const onToggleEdit = useCallback(() => {
-    sendTelemetry('input_button_toggle', {
-      app_pathname: getBasePathname(pathname),
+    sendTelemetry(TELEMETRY_EVENT_TYPE.SEARCH_WIDGET_ACTION.WIDGET_EDIT_TOGGLED, {
+      app_pathname: getPathnameWithoutId(pathname),
       app_section: 'search-widget',
       app_action_value: 'widget-edit-button',
     });
@@ -204,14 +233,14 @@ const Widget = ({ id, editing, widget, title, position, onPositionsChange }: Pro
       unsetWidgetEditing();
       setOldWidget(undefined);
     } else {
-      RefreshActions.disable();
+      stopAutoRefresh();
       setWidgetEditing(widget.id);
       setOldWidget(widget);
     }
-  }, [editing, pathname, sendTelemetry, setWidgetEditing, unsetWidgetEditing, widget]);
+  }, [editing, pathname, sendTelemetry, setWidgetEditing, stopAutoRefresh, unsetWidgetEditing, widget]);
   const onCancelEdit = useCallback(() => {
-    sendTelemetry('click', {
-      app_pathname: getBasePathname(pathname),
+    sendTelemetry(TELEMETRY_EVENT_TYPE.SEARCH_WIDGET_ACTION.WIDGET_EDIT_CANCEL_CLICKED, {
+      app_pathname: getPathnameWithoutId(pathname),
       app_section: 'search-widget',
       app_action_value: 'widget-edit-cancel-button',
     });
@@ -223,12 +252,27 @@ const Widget = ({ id, editing, widget, title, position, onPositionsChange }: Pro
     onToggleEdit();
   }, [dispatch, id, oldWidget, onToggleEdit, pathname, sendTelemetry]);
   const onRenameWidget = useCallback((newTitle: string) => dispatch(setWidgetTitle(id, newTitle)), [dispatch, id]);
-  const onWidgetConfigChange = useCallback((newWidgetConfig: WidgetConfig) => dispatch(updateWidgetConfig(id, newWidgetConfig)).then(() => {
-  }), [dispatch, id]);
+  const onWidgetConfigChange = useCallback(async (newWidgetConfig: WidgetConfig) => {
+    sendTelemetry(TELEMETRY_EVENT_TYPE.SEARCH_WIDGET_ACTION.WIDGET_CONFIG_UPDATED, {
+      app_pathname: getPathnameWithoutId(pathname),
+      app_section: 'search-widget',
+      app_action_value: 'widget-edit-update-button',
+    });
+
+    return dispatch(updateWidgetConfig(id, newWidgetConfig)).then(() => {
+    });
+  }, [dispatch, id, pathname, sendTelemetry]);
   const activeQuery = useActiveQueryId();
 
   const { config } = widget;
   const isFocused = focusedWidget?.id === id;
+  const titleIcon = (
+    <IfDashboard>
+      {!editing && (
+        <WidgetWarmTierAlert widgetId={id} activeQuery={activeQuery} />
+      )}
+    </IfDashboard>
+  );
 
   return (
     <WidgetColorContext id={id}>
@@ -236,8 +280,10 @@ const Widget = ({ id, editing, widget, title, position, onPositionsChange }: Pro
         <InteractiveContext.Consumer>
           {(interactive) => (
             <WidgetHeader title={title}
+                          titleIcon={titleIcon}
                           hideDragHandle={!interactive || isFocused}
                           loading={loading}
+                          editing={editing}
                           onRename={onRenameWidget}>
               {!editing ? (
                 <WidgetActionsMenu isFocused={isFocused}
@@ -251,6 +297,7 @@ const Widget = ({ id, editing, widget, title, position, onPositionsChange }: Pro
         </InteractiveContext.Consumer>
         <EditWrapper onToggleEdit={onToggleEdit}
                      onCancelEdit={onCancelEdit}
+                     showQueryControls={isDashboard}
                      onWidgetConfigChange={onWidgetConfigChange}
                      config={config}
                      editing={editing}
@@ -270,25 +317,13 @@ const Widget = ({ id, editing, widget, title, position, onPositionsChange }: Pro
           </WidgetErrorBoundary>
         </EditWrapper>
         <WidgetFooter>
-          <IfDashboard>
-            {!editing && <TimerangeInfo widget={widget} activeQuery={activeQuery} widgetId={id} />}
-          </IfDashboard>
+          {((widget.returnsAllRecords || isDashboard) && !editing) && (
+            <TimerangeInfo widget={widget} activeQuery={activeQuery} widgetId={id} returnsAllRecords={widget.returnsAllRecords} />
+          )}
         </WidgetFooter>
       </WidgetFrame>
     </WidgetColorContext>
   );
-};
-
-Widget.propTypes = {
-  editing: PropTypes.bool,
-  id: PropTypes.string.isRequired,
-  onPositionsChange: PropTypes.func.isRequired,
-  title: PropTypes.string.isRequired,
-  widget: PropTypes.instanceOf(WidgetModel).isRequired,
-};
-
-Widget.defaultProps = {
-  editing: false,
 };
 
 export default Widget;

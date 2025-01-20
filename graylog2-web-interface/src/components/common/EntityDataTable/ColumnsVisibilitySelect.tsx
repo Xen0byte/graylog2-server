@@ -18,11 +18,10 @@ import styled from 'styled-components';
 import * as React from 'react';
 import { useMemo } from 'react';
 
-import { Checkbox, DropdownButton } from 'components/bootstrap';
+import { Checkbox, DropdownButton, MenuItem } from 'components/bootstrap';
 import type { Column } from 'components/common/EntityDataTable/types';
 import TextOverflowEllipsis from 'components/common/TextOverflowEllipsis';
 import { defaultCompare as naturalSort } from 'logic/DefaultCompare';
-import MenuItem from 'components/bootstrap/MenuItem';
 
 const StyledDropdownButton = styled(DropdownButton)`
   ~ .dropdown-menu {
@@ -48,9 +47,7 @@ const ColumnCheckbox = styled(Checkbox)`
   }
 `;
 
-const ListItem = styled(MenuItem)`
-  padding: 3px 0;
-  cursor: pointer;
+const ListItemInner = styled.div`
   display: flex;
 `;
 
@@ -86,10 +83,12 @@ const ColumnListItem = ({
   };
 
   return (
-    <ListItem onSelect={toggleVisibility} title={`${isSelected ? 'Hide' : 'Show'} ${column.title}`}>
-      <ColumnCheckbox checked={isSelected} onChange={toggleVisibility} />
-      <ColumnTitle>{column.title}</ColumnTitle>
-    </ListItem>
+    <MenuItem onSelect={toggleVisibility} title={`${isSelected ? 'Hide' : 'Show'} ${column.title}`}>
+      <ListItemInner>
+        <ColumnCheckbox checked={isSelected} onChange={toggleVisibility} />
+        <ColumnTitle>{column.title}</ColumnTitle>
+      </ListItemInner>
+    </MenuItem>
   );
 };
 
@@ -111,7 +110,8 @@ const ColumnsVisibilitySelect = ({ onChange, selectedColumns, allColumns }: Prop
                           pullRight
                           aria-label="Configure visible columns"
                           id="columns-visibility-select"
-                          bsStyle="default">
+                          bsStyle="default"
+                          closeOnItemClick={false}>
       {sortedColumns.map((column) => (
         <ColumnListItem column={column}
                         onClick={onChange}

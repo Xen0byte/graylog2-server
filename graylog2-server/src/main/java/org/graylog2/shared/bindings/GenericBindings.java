@@ -16,7 +16,6 @@
  */
 package org.graylog2.shared.bindings;
 
-import com.google.common.eventbus.EventBus;
 import com.google.common.util.concurrent.ServiceManager;
 import com.google.inject.Scopes;
 import com.google.inject.TypeLiteral;
@@ -35,14 +34,10 @@ import org.graylog2.indexer.EventIndexTemplateProvider;
 import org.graylog2.indexer.IndexTemplateProvider;
 import org.graylog2.indexer.MessageIndexTemplateProvider;
 import org.graylog2.plugin.IOState;
-import org.graylog2.plugin.LocalMetricRegistry;
 import org.graylog2.plugin.buffers.InputBuffer;
 import org.graylog2.plugin.inject.Graylog2Module;
 import org.graylog2.plugin.inputs.MessageInput;
 import org.graylog2.plugin.inputs.util.ThroughputCounter;
-import org.graylog2.plugin.system.FilePersistedNodeIdProvider;
-import org.graylog2.plugin.system.NodeId;
-import org.graylog2.shared.bindings.providers.EventBusProvider;
 import org.graylog2.shared.bindings.providers.OkHttpClientProvider;
 import org.graylog2.shared.bindings.providers.ProxiedRequestsExecutorService;
 import org.graylog2.shared.bindings.providers.ServiceManagerProvider;
@@ -51,6 +46,7 @@ import org.graylog2.shared.buffers.NoopInputBuffer;
 import org.graylog2.shared.buffers.ProcessBuffer;
 import org.graylog2.shared.buffers.processors.DecodingProcessor;
 import org.graylog2.shared.buffers.processors.MessageULIDGenerator;
+import org.graylog2.shared.inputs.InputLauncher;
 import org.graylog2.shared.inputs.InputRegistry;
 
 import javax.activation.MimetypesFileTypeMap;
@@ -66,7 +62,6 @@ public class GenericBindings extends Graylog2Module {
 
     @Override
     protected void configure() {
-        bind(LocalMetricRegistry.class).in(Scopes.NO_SCOPE); // must not be a singleton!
 
         install(new FactoryModuleBuilder().build(DecodingProcessor.Factory.class));
 
@@ -76,7 +71,6 @@ public class GenericBindings extends Graylog2Module {
         } else {
             bind(InputBuffer.class).to(InputBufferImpl.class);
         }
-        bind(NodeId.class).toProvider(FilePersistedNodeIdProvider.class).asEagerSingleton();;
 
         if (!isMigrationCommand) {
             bind(ServiceManager.class).toProvider(ServiceManagerProvider.class).asEagerSingleton();
@@ -85,13 +79,13 @@ public class GenericBindings extends Graylog2Module {
 
         bind(ThroughputCounter.class);
 
-        bind(EventBus.class).toProvider(EventBusProvider.class).in(Scopes.SINGLETON);
-
         bind(Semaphore.class).annotatedWith(Names.named("JournalSignal")).toInstance(new Semaphore(0));
 
         install(new FactoryModuleBuilder().build(new TypeLiteral<IOState.Factory<MessageInput>>() {}));
 
         bind(InputRegistry.class).asEagerSingleton();
+
+        bind(InputLauncher.class).asEagerSingleton();
 
         bind(OkHttpClient.class).toProvider(OkHttpClientProvider.class).asEagerSingleton();
 

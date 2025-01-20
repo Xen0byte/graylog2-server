@@ -16,20 +16,29 @@
  */
 package org.graylog.failure;
 
+import com.codahale.metrics.Meter;
+import com.codahale.metrics.MetricRegistry;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 import org.apache.commons.lang3.StringUtils;
-import org.graylog2.indexer.messages.Messages;
+import org.graylog2.indexer.messages.Indexable;
+import org.graylog2.indexer.messages.IndexingError;
 import org.graylog2.plugin.Message;
 import org.graylog2.plugin.Tools;
+import org.graylog2.shared.bindings.providers.ObjectMapperProvider;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
-import java.util.stream.Collectors;
+import java.util.Map;
+
+import static com.codahale.metrics.MetricRegistry.name;
+import static org.graylog2.indexer.messages.IndexingError.Type.MappingError;
+import static org.graylog2.plugin.Message.FIELD_GL2_SOURCE_INPUT;
 
 /**
  * A supplementary service layer, which is aimed to simplify failure
@@ -44,12 +53,20 @@ public class FailureSubmissionService {
     private final FailureSubmissionQueue failureSubmissionQueue;
     private final FailureHandlingConfiguration failureHandlingConfiguration;
 
+    private final MetricRegistry metricRegistry;
+    private final ObjectMapper objectMapper;
+    private final Meter dummyMeter = new Meter();
+
     @Inject
     public FailureSubmissionService(
             FailureSubmissionQueue failureSubmissionQueue,
-            FailureHandlingConfiguration failureHandlingConfiguration) {
+            FailureHandlingConfiguration failureHandlingConfiguration,
+            MetricRegistry metricRegistry,
+            ObjectMapperProvider objectMapperProvider) {
         this.failureSubmissionQueue = failureSubmissionQueue;
         this.failureHandlingConfiguration = failureHandlingConfiguration;
+        this.metricRegistry = metricRegistry;
+        this.objectMapper = objectMapperProvider.get();
     }
 
     /**
@@ -87,6 +104,8 @@ public class FailureSubmissionService {
         if (processingErrors.isEmpty()) {
             return true;
         }
+
+        updateProcessingFailureMetric(message);
 
         if (!message.supportsFailureHandling()) {
             logger.warn("Submitted a message with processing errors, which doesn't support failure handling!");
@@ -136,10 +155,13 @@ public class FailureSubmissionService {
 
     /**
      * Submits Elasticsearch indexing errors to the failure queue
+     *
      * @param indexingErrors a collection of indexing errors
      */
-    public void submitIndexingErrors(Collection<Messages.IndexingError> indexingErrors) {
+    public void submitIndexingErrors(Collection<IndexingError> indexingErrors) {
         try {
+            indexingErrors.forEach(ie -> updateIndexingFailureMetric(ie.message()));
+
             final FailureBatch fb = FailureBatch.indexingFailureBatch(
                     indexingErrors.stream()
                             .filter(ie -> {
@@ -151,7 +173,7 @@ public class FailureSubmissionService {
                                 }
                             })
                             .map(this::fromIndexingError)
-                            .collect(Collectors.toList()));
+                            .toList());
 
             if (fb.size() > 0) {
                 failureSubmissionQueue.submitBlocking(fb);
@@ -164,17 +186,34 @@ public class FailureSubmissionService {
         }
     }
 
-    private IndexingFailure fromIndexingError(Messages.IndexingError indexingError) {
+    private IndexingFailure fromIndexingError(IndexingError indexingError) {
         return new IndexingFailure(
-                indexingError.errorType() == Messages.IndexingError.ErrorType.MappingError ?
+                indexingError.error().type() == MappingError ?
                         IndexingFailureCause.MappingError : IndexingFailureCause.UNKNOWN,
                 String.format(Locale.ENGLISH,
                         "Failed to index message with id '%s' targeting '%s'",
                         indexingError.message().getMessageId(), indexingError.index()),
-                indexingError.errorMessage(),
+                indexingError.error().errorMessage(),
                 Tools.nowUTC(),
                 indexingError.message(),
                 indexingError.index()
         );
+    }
+
+    private void updateProcessingFailureMetric(Message message) {
+        Object inputId = message.getField(FIELD_GL2_SOURCE_INPUT);
+        if (inputId != null) {
+            final String indexingFailureMetricName = name("org.graylog2.inputs", inputId.toString(), "failures.processing");
+            metricRegistry.meter(indexingFailureMetricName).mark();
+        }
+    }
+
+    private void updateIndexingFailureMetric(Indexable message) {
+        final Map<String, Object> searchObject = message.toElasticSearchObject(objectMapper, dummyMeter);
+        Object inputId = searchObject.get(FIELD_GL2_SOURCE_INPUT);
+        if (inputId != null) {
+            final String indexingFailureMetricName = name("org.graylog2.inputs", inputId.toString(), "failures.indexing");
+            metricRegistry.meter(indexingFailureMetricName).mark();
+        }
     }
 }

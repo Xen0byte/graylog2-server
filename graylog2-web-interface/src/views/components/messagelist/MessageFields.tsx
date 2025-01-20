@@ -15,7 +15,6 @@
  * <http://www.mongodb.com/licensing/server-side-public-license>.
  */
 import * as React from 'react';
-import type { DefaultTheme } from 'styled-components';
 import styled, { css } from 'styled-components';
 
 import { MessageDetailsDefinitionList } from 'components/common';
@@ -26,14 +25,12 @@ import FieldTypeMapping from 'views/logic/fieldtypes/FieldTypeMapping';
 
 import type { Message } from './Types';
 
-import CustomHighlighting from '../highlighting/CustomHighlighting';
-
 type Props = {
   message: Message,
   fields: FieldTypeMappingsList,
 };
 
-const MessageDetailsDL = styled(MessageDetailsDefinitionList)(({ theme }: { theme: DefaultTheme }) => css`
+const MessageDetailsDL = styled(MessageDetailsDefinitionList)(({ theme }) => css`
   color: ${theme.colors.global.textDefault};
 
   dd {
@@ -51,14 +48,10 @@ const MessageFields = ({ message, fields }: Props) => {
       const { type } = fields.find((t) => t.name === key, undefined, FieldTypeMapping.create(key, FieldType.Unknown));
 
       return (
-        <CustomHighlighting key={key}
-                            field={key}
-                            value={formattedFields[key]}>
-          <MessageField fieldName={key}
-                        fieldType={type}
-                        message={message}
-                        value={formattedFields[key]} />
-        </CustomHighlighting>
+        <MessageField fieldName={key}
+                      fieldType={type}
+                      message={message}
+                      value={formattedFields[key]} />
       );
     });
 

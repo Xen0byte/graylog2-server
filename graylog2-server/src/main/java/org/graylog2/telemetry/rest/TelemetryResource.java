@@ -16,11 +16,22 @@
  */
 package org.graylog2.telemetry.rest;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import io.swagger.annotations.ApiParam;
 import io.swagger.annotations.ApiResponse;
 import io.swagger.annotations.ApiResponses;
+import jakarta.inject.Inject;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.NotFoundException;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
 import org.apache.shiro.authz.annotation.RequiresAuthentication;
 import org.graylog2.audit.AuditActor;
 import org.graylog2.audit.AuditEventSender;
@@ -28,16 +39,6 @@ import org.graylog2.audit.jersey.NoAuditEvent;
 import org.graylog2.plugin.database.users.User;
 import org.graylog2.shared.rest.resources.RestResource;
 
-import javax.inject.Inject;
-import javax.validation.Valid;
-import javax.validation.constraints.NotNull;
-import javax.ws.rs.Consumes;
-import javax.ws.rs.GET;
-import javax.ws.rs.NotFoundException;
-import javax.ws.rs.PUT;
-import javax.ws.rs.Path;
-import javax.ws.rs.Produces;
-import javax.ws.rs.core.MediaType;
 import java.util.Map;
 
 import static org.graylog2.audit.AuditEventTypes.TELEMETRY_USER_SETTINGS_UPDATE;
@@ -62,7 +63,7 @@ public class TelemetryResource extends RestResource {
 
     @GET
     @ApiOperation(value = "Get telemetry information.")
-    public Map<String, Object> get() {
+    public ObjectNode get() {
         return telemetryService.getTelemetryResponse(getCurrentUserOrThrow());
     }
 

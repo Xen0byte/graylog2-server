@@ -15,7 +15,7 @@
  * <http://www.mongodb.com/licensing/server-side-public-license>.
  */
 import React, { useContext, useState } from 'react';
-import PropTypes from 'prop-types';
+import styled from 'styled-components';
 
 import { Button, Col, ControlLabel, FormControl, FormGroup, Row, Input } from 'components/bootstrap';
 import { ConfirmLeaveDialog, SourceCodeEditor, FormSubmit } from 'components/common';
@@ -27,10 +27,28 @@ import PipelinesUsingRule from './PipelinesUsingRule';
 import RuleSimulation from './RuleSimulation';
 
 type Props = {
-  create: boolean,
+  create?: boolean
 };
 
-const RuleForm = ({ create }: Props) => {
+const StyledContainer = styled.div`
+  & .source-code-editor div {
+    border-color: ${({ theme }) => theme.colors.input.border};
+    border-radius: 0;
+
+    & .ace_editor {
+      border-radius: 0;
+    }
+  }
+
+  & .ace_tooltip.ace-graylog {
+    background-color: ${({ theme }) => theme.colors.global.background};
+    padding: 4px;
+    padding-left: 0;
+    line-height: 1.5;
+  }
+`;
+
+const RuleForm = ({ create = false }: Props) => {
   const {
     description,
     handleDescription,
@@ -45,28 +63,31 @@ const RuleForm = ({ create }: Props) => {
   const [errorMessage, setErrorMessage] = useState('');
   const history = useHistory();
 
-  const handleError = (error) => {
-    if (error.responseMessage.includes('duplicate key error')) {
+  const handleError = (error: { responseMessage: string }) => {
+    if (error?.responseMessage?.includes('duplicate key error')) {
       const duplicatedTitle = error.responseMessage.match(/title: "(.*)"/i)[1];
       setErrorMessage(`Rule title "${duplicatedTitle}" already exists!`);
     }
   };
 
+  const handleCancel = () => {
+    setErrorMessage('');
+    setIsDirty(false);
+    history.push(Routes.SYSTEM.PIPELINES.RULES);
+  };
+
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    setIsDirty(false);
     event.preventDefault();
 
-    handleSavePipelineRule(() => {
-      setErrorMessage('');
-      setIsDirty(false);
-      history.goBack();
-    }, handleError);
+    handleSavePipelineRule(handleCancel, handleError);
   };
 
   const handleApply = () => {
     handleSavePipelineRule((rule) => {
       setErrorMessage('');
       setIsDirty(false);
-      history.replace(Routes.SYSTEM.PIPELINES.RULE(rule.id));
+      history.push(Routes.SYSTEM.PIPELINES.RULE(rule.id));
     }, handleError);
   };
 
@@ -79,10 +100,6 @@ const RuleForm = ({ create }: Props) => {
     setErrorMessage('');
     setIsDirty(true);
     onChangeSource(newSource);
-  };
-
-  const handleCancel = () => {
-    history.goBack();
   };
 
   return (
@@ -103,19 +120,20 @@ const RuleForm = ({ create }: Props) => {
                value={description}
                onChange={handleDescriptionChange}
                autoFocus
+               rows={1}
                help="Rule description (optional)." />
 
         <PipelinesUsingRule create={create} />
 
         <Input id="rule-source-editor" label="Rule source" help="Rule source, see quick reference for more information." error={errorMessage}>
-          {/* TODO: Figure out issue with props */}
-          {/* @ts-ignore */}
-          <SourceCodeEditor id={`source${create ? '-create' : '-edit'}`}
-                            mode="pipeline"
-                            onLoad={onAceLoaded}
-                            onChange={handleSourceChange}
-                            value={ruleSource}
-                            innerRef={ruleSourceRef} />
+          <StyledContainer>
+            <SourceCodeEditor id={`source${create ? '-create' : '-edit'}`}
+                              mode="pipeline"
+                              onLoad={onAceLoaded}
+                              onChange={handleSourceChange}
+                              value={ruleSource}
+                              innerRef={ruleSourceRef} />
+          </StyledContainer>
         </Input>
 
         <RuleSimulation />
@@ -123,7 +141,7 @@ const RuleForm = ({ create }: Props) => {
 
       <Row>
         <Col md={12}>
-          <FormSubmit submitButtonText={`${create ? 'Create rule' : 'Update rule & close'}`}
+          <FormSubmit submitButtonText={create ? 'Create rule' : 'Update rule & close'}
                       centerCol={!create && (
                         <Button type="button" bsStyle="info" onClick={handleApply}>
                           Update rule
@@ -134,14 +152,6 @@ const RuleForm = ({ create }: Props) => {
       </Row>
     </form>
   );
-};
-
-RuleForm.propTypes = {
-  create: PropTypes.bool,
-};
-
-RuleForm.defaultProps = {
-  create: false,
 };
 
 export default RuleForm;

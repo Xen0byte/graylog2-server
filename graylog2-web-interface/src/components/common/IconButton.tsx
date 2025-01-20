@@ -15,14 +15,12 @@
  * <http://www.mongodb.com/licensing/server-side-public-license>.
  */
 import * as React from 'react';
-import PropTypes from 'prop-types';
-import type { DefaultTheme } from 'styled-components';
 import styled, { css } from 'styled-components';
 
 import Icon from 'components/common/Icon';
-import type { IconName } from 'components/common/Icon';
+import type { IconName, RotateProp, IconType, SizeProp } from 'components/common/Icon';
 
-const Wrapper = styled.button(({ theme, disabled }: {theme: DefaultTheme, disabled: boolean}) => css`
+const Wrapper = styled.button<{ disabled: boolean }>(({ theme, disabled }) => css`
   display: inline-flex;
   justify-content: center;
   align-items: center;
@@ -34,11 +32,11 @@ const Wrapper = styled.button(({ theme, disabled }: {theme: DefaultTheme, disabl
   color: ${disabled ? theme.colors.gray[90] : theme.colors.gray[60]};
   font-size: ${theme.fonts.size.large};
 
-  :hover {
+  &:hover {
     background-color: ${theme.colors.gray[80]};
   }
 
-  :active {
+  &:active {
     background-color: ${theme.colors.gray[70]};
   }
 `);
@@ -46,38 +44,43 @@ const Wrapper = styled.button(({ theme, disabled }: {theme: DefaultTheme, disabl
 type Props = {
   focusable?: boolean,
   title: string,
-  onClick?: () => void,
+  onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void,
   className?: string,
-  name: IconName,
+  name: IconName
+  iconType?: IconType,
   disabled?: boolean,
+  rotation?: RotateProp,
+  'data-testid'?: string,
+  size?: SizeProp,
 };
 
-const handleClick = (onClick) => {
+const handleClick = (onClick: (e: React.MouseEvent<HTMLButtonElement>) => void | undefined, e: React.MouseEvent<HTMLButtonElement>) => {
   if (typeof onClick === 'function') {
-    onClick();
+    onClick(e);
   }
 };
 
-const IconButton = ({ title, onClick, focusable, className, disabled, ...rest }: Props) => (
-  <Wrapper tabIndex={focusable ? 0 : -1} title={title} onClick={() => handleClick(onClick)} className={className} type="button" disabled={disabled}>
-    <Icon {...rest} />
+const IconButton = React.forwardRef<HTMLButtonElement, Props>(({
+  title,
+  onClick,
+  focusable = true,
+  className,
+  disabled = false,
+  iconType,
+  'data-testid': dataTestId,
+  ...rest
+}: Props, ref) => (
+  <Wrapper ref={ref}
+           tabIndex={focusable ? 0 : -1}
+           data-testid={dataTestId}
+           title={title}
+           aria-label={title}
+           onClick={(e) => handleClick(onClick, e)}
+           className={className}
+           type="button"
+           disabled={disabled}>
+    <Icon type={iconType} {...rest} />
   </Wrapper>
-);
-
-IconButton.propTypes = {
-  className: PropTypes.string,
-  title: PropTypes.string,
-  onClick: PropTypes.func,
-  name: PropTypes.string,
-};
-
-IconButton.defaultProps = {
-  className: undefined,
-  focusable: true,
-  onClick: undefined,
-  title: undefined,
-  name: undefined,
-  disabled: false,
-};
+));
 
 export default IconButton;

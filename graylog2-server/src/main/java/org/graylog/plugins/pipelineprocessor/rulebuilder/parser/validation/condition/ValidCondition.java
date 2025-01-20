@@ -16,14 +16,15 @@
  */
 package org.graylog.plugins.pipelineprocessor.rulebuilder.parser.validation.condition;
 
+import jakarta.inject.Inject;
 import org.graylog.plugins.pipelineprocessor.rulebuilder.RuleBuilderRegistry;
 import org.graylog.plugins.pipelineprocessor.rulebuilder.RuleBuilderStep;
 import org.graylog.plugins.pipelineprocessor.rulebuilder.db.RuleFragment;
 import org.graylog.plugins.pipelineprocessor.rulebuilder.parser.validation.ValidationResult;
 import org.graylog.plugins.pipelineprocessor.rulebuilder.parser.validation.Validator;
 
-import javax.inject.Inject;
 import java.util.Map;
+import java.util.Objects;
 
 public class ValidCondition implements Validator {
 
@@ -31,12 +32,12 @@ public class ValidCondition implements Validator {
 
     @Inject
     public ValidCondition(RuleBuilderRegistry ruleBuilderRegistry) {
-        this.conditions = ruleBuilderRegistry.conditions();
+        this.conditions = ruleBuilderRegistry.conditionsWithInternal();
     }
 
     @Override
     public ValidationResult validate(RuleBuilderStep step) {
-        if (!conditions.containsKey(step.function())) {
+        if (Objects.nonNull(step.function()) && !conditions.containsKey(step.function())) {
             return new ValidationResult(true, "Function " + step.function() + " not available as condition for rule builder.");
         }
 

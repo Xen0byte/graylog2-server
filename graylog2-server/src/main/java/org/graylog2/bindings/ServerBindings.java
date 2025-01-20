@@ -22,6 +22,8 @@ import com.google.inject.assistedinject.FactoryModuleBuilder;
 import com.google.inject.multibindings.Multibinder;
 import com.google.inject.multibindings.OptionalBinder;
 import com.google.inject.name.Names;
+import jakarta.ws.rs.container.DynamicFeature;
+import jakarta.ws.rs.ext.ExceptionMapper;
 import org.apache.shiro.mgt.DefaultSecurityManager;
 import org.glassfish.grizzly.http.server.ErrorPageGenerator;
 import org.graylog.scheduler.capabilities.ServerNodeCapabilitiesModule;
@@ -29,21 +31,21 @@ import org.graylog2.Configuration;
 import org.graylog2.alerts.AlertSender;
 import org.graylog2.alerts.EmailRecipients;
 import org.graylog2.alerts.FormattedEmailAlertSender;
-import org.graylog2.bindings.providers.ClusterEventBusProvider;
 import org.graylog2.bindings.providers.DefaultSecurityManagerProvider;
 import org.graylog2.bindings.providers.DefaultStreamProvider;
 import org.graylog2.bindings.providers.HtmlSafeJmteEngineProvider;
+import org.graylog2.bindings.providers.JsonSafeEngineProvider;
 import org.graylog2.bindings.providers.SecureFreemarkerConfigProvider;
 import org.graylog2.bindings.providers.SystemJobFactoryProvider;
 import org.graylog2.bindings.providers.SystemJobManagerProvider;
+import org.graylog2.bootstrap.uncaughtexeptions.DefaultUncaughtExceptionHandlerCreator;
+import org.graylog2.buffers.processors.OutputBufferProcessor;
 import org.graylog2.cluster.ClusterConfigServiceImpl;
 import org.graylog2.cluster.leader.FakeLeaderElectionModule;
 import org.graylog2.cluster.leader.LeaderElectionModule;
 import org.graylog2.cluster.lock.LockServiceModule;
-import org.graylog2.events.ClusterEventBus;
 import org.graylog2.grok.GrokModule;
 import org.graylog2.grok.GrokPatternRegistry;
-import org.graylog2.indexer.SetIndexReadOnlyJob;
 import org.graylog2.indexer.fieldtypes.FieldTypesModule;
 import org.graylog2.indexer.healing.FixDeflectorByDeleteJob;
 import org.graylog2.indexer.healing.FixDeflectorByMoveJob;
@@ -70,6 +72,8 @@ import org.graylog2.rest.NotFoundExceptionMapper;
 import org.graylog2.rest.QueryParsingExceptionMapper;
 import org.graylog2.rest.ScrollChunkWriter;
 import org.graylog2.rest.ValidationExceptionMapper;
+import org.graylog2.rest.models.system.indices.DataTieringStatusService;
+import org.graylog2.rest.models.system.indices.DefaultDataTieringStatusService;
 import org.graylog2.rest.resources.entities.preferences.listeners.EntityListPreferencesCleanerOnUserDeletion;
 import org.graylog2.security.realm.AuthenticatingRealmModule;
 import org.graylog2.security.realm.AuthorizationOnlyRealmModule;
@@ -94,16 +98,15 @@ import org.graylog2.system.jobs.SystemJobFactory;
 import org.graylog2.system.jobs.SystemJobManager;
 import org.graylog2.system.shutdown.GracefulShutdown;
 import org.graylog2.system.stats.ClusterStatsModule;
-import org.graylog2.telemetry.enterprise.DefaultTelemetryEnterpriseDataProvider;
-import org.graylog2.telemetry.enterprise.TelemetryEnterpriseDataProvider;
+import org.graylog2.system.traffic.OpenTrafficCounterCalculator;
+import org.graylog2.system.traffic.TrafficCounterCalculator;
+import org.graylog2.system.traffic.TrafficCounterService;
+import org.graylog2.system.traffic.TrafficUpdater;
 import org.graylog2.users.GrantsCleanupListener;
 import org.graylog2.users.RoleService;
 import org.graylog2.users.RoleServiceImpl;
 import org.graylog2.users.StartPageCleanupListener;
 import org.graylog2.users.UserImpl;
-
-import javax.ws.rs.container.DynamicFeature;
-import javax.ws.rs.ext.ExceptionMapper;
 
 public class ServerBindings extends Graylog2Module {
     private final Configuration configuration;
@@ -153,7 +156,6 @@ public class ServerBindings extends Graylog2Module {
     }
 
     private void bindProviders() {
-        bind(ClusterEventBus.class).toProvider(ClusterEventBusProvider.class).asEagerSingleton();
         bind(freemarker.template.Configuration.class).toProvider(SecureFreemarkerConfigProvider.class);
     }
 
@@ -161,7 +163,6 @@ public class ServerBindings extends Graylog2Module {
         // System Jobs
         install(new FactoryModuleBuilder().build(RebuildIndexRangesJob.Factory.class));
         install(new FactoryModuleBuilder().build(OptimizeIndexJob.Factory.class));
-        install(new FactoryModuleBuilder().build(SetIndexReadOnlyJob.Factory.class));
         install(new FactoryModuleBuilder().build(IndexSetCleanupJob.Factory.class));
         install(new FactoryModuleBuilder().build(CreateNewSingleIndexRangeJob.Factory.class));
         install(new FactoryModuleBuilder().build(FixDeflectorByDeleteJob.Factory.class));
@@ -173,11 +174,14 @@ public class ServerBindings extends Graylog2Module {
         install(new FactoryModuleBuilder().build(EmailRecipients.Factory.class));
 
         install(new FactoryModuleBuilder().build(ProcessBufferProcessor.Factory.class));
+        install(new FactoryModuleBuilder().build(OutputBufferProcessor.Factory.class));
+
         bind(Stream.class).annotatedWith(DefaultStream.class).toProvider(DefaultStreamProvider.class);
         bind(DefaultStreamChangeHandler.class).asEagerSingleton();
     }
 
     private void bindSingletons() {
+        bind(DefaultUncaughtExceptionHandlerCreator.class).asEagerSingleton();
         bind(SystemJobManager.class).toProvider(SystemJobManagerProvider.class);
         bind(DefaultSecurityManager.class).toProvider(DefaultSecurityManagerProvider.class).asEagerSingleton();
         bind(SystemJobFactory.class).toProvider(SystemJobFactoryProvider.class);
@@ -187,6 +191,7 @@ public class ServerBindings extends Graylog2Module {
         bind(GrokPatternRegistry.class).in(Scopes.SINGLETON);
         bind(Engine.class).toInstance(Engine.createEngine());
         bind(Engine.class).annotatedWith(Names.named("HtmlSafe")).toProvider(HtmlSafeJmteEngineProvider.class).asEagerSingleton();
+        bind(Engine.class).annotatedWith(Names.named("JsonSafe")).toProvider(JsonSafeEngineProvider.class).asEagerSingleton();
         bind(ErrorPageGenerator.class).to(GraylogErrorPageGenerator.class).asEagerSingleton();
     }
 
@@ -200,10 +205,14 @@ public class ServerBindings extends Graylog2Module {
 
         bind(RoleService.class).to(RoleServiceImpl.class).in(Scopes.SINGLETON);
         OptionalBinder.newOptionalBinder(binder(), ClusterIdFactory.class).setDefault().to(RandomUUIDClusterIdFactory.class);
-        OptionalBinder.newOptionalBinder(binder(), TelemetryEnterpriseDataProvider.class).setDefault().to(DefaultTelemetryEnterpriseDataProvider.class);
 
         bind(CSPService.class).to(CSPServiceImpl.class).asEagerSingleton();
         bind(CSPEventListener.class).asEagerSingleton();
+
+        OptionalBinder.newOptionalBinder(binder(), DataTieringStatusService.class).setDefault().to(DefaultDataTieringStatusService.class);
+
+        Multibinder.newSetBinder(binder(), TrafficCounterCalculator.class).addBinding().to(OpenTrafficCounterCalculator.class);
+        OptionalBinder.newOptionalBinder(binder(), TrafficUpdater.class).setDefault().to(TrafficCounterService.class).asEagerSingleton();
     }
 
     private void bindDynamicFeatures() {

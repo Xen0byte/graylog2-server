@@ -20,28 +20,10 @@ import React, { useEffect, useState } from 'react';
 import useParams from 'routing/useParams';
 import useEventDefinition from 'hooks/useEventDefinition';
 import { Spinner } from 'components/common';
-import SearchPage from 'views/pages/SearchPage';
 import { EventNotificationsActions } from 'stores/event-notifications/EventNotificationsStore';
-import useAlertAndEventDefinitionData from 'hooks/useAlertAndEventDefinitionData';
-import useCreateViewForEventDefinition from 'views/logic/views/UseCreateViewForEventDefinition';
-import EventInfoBar from 'components/event-definitions/replay-search/EventInfoBar';
 import { createFromFetchError } from 'logic/errors/ReportedErrors';
 import ErrorsActions from 'actions/errors/ErrorsActions';
-import useCreateSearch from 'views/hooks/useCreateSearch';
-
-const EventView = () => {
-  const { eventDefinition, aggregations } = useAlertAndEventDefinitionData();
-  const _view = useCreateViewForEventDefinition({ eventDefinition, aggregations });
-  const view = useCreateSearch(_view);
-
-  return (
-    <SearchPage view={view}
-                isNew
-                SearchComponentSlots={{
-                  InfoBarSlot: EventInfoBar,
-                }} />
-  );
-};
+import ReplaySearch from 'components/events/ReplaySearch';
 
 export const onErrorHandler = (error) => {
   if (error.status === 404) {
@@ -51,7 +33,7 @@ export const onErrorHandler = (error) => {
 
 const EventDefinitionReplaySearchPage = () => {
   const [isNotificationLoaded, setIsNotificationLoaded] = useState(false);
-  const { definitionId } = useParams<{ definitionId?: string }>();
+  const { alertId, definitionId } = useParams<{ alertId?: string, definitionId?: string }>();
   const { isLoading: EDIsLoading, isFetched: EDIsFetched } = useEventDefinition(definitionId, { onErrorHandler });
 
   useEffect(() => {
@@ -60,7 +42,9 @@ const EventDefinitionReplaySearchPage = () => {
 
   const isLoading = EDIsLoading || !EDIsFetched || !isNotificationLoaded;
 
-  return isLoading ? <Spinner /> : <EventView />;
+  return isLoading
+    ? <Spinner />
+    : <ReplaySearch alertId={alertId} definitionId={definitionId} replayEventDefinition />;
 };
 
 export default EventDefinitionReplaySearchPage;

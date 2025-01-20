@@ -20,6 +20,7 @@ import freemarker.cache.StringTemplateLoader;
 import freemarker.template.Configuration;
 import freemarker.template.Template;
 import freemarker.template.TemplateNotFoundException;
+import org.apache.commons.lang.StringEscapeUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.graylog.plugins.pipelineprocessor.ast.functions.FunctionDescriptor;
 import org.graylog.plugins.pipelineprocessor.ast.functions.ParameterDescriptor;
@@ -28,6 +29,7 @@ import org.graylog.plugins.pipelineprocessor.rulebuilder.db.RuleFragment;
 import org.graylog2.bindings.providers.SecureFreemarkerConfigProvider;
 
 import java.io.StringWriter;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -38,6 +40,10 @@ public class ParserUtil {
 
 
     static final String generateForFunction(RuleBuilderStep step, FunctionDescriptor<?> function) {
+        return generateForFunction(step, function, 1);
+    }
+
+    static final String generateForFunction(RuleBuilderStep step, FunctionDescriptor<?> function, int level) {
         String syntax = function.name() + "(";
         String params = function.params().stream()
                 .map(p -> addFunctionParameter(p, step))
@@ -46,7 +52,7 @@ public class ParserUtil {
         if (StringUtils.isEmpty(params)) {
             return syntax + ")";
         } else {
-            return syntax + ConditionParser.NL + params + ConditionParser.NL + "  )";
+            return syntax + ConditionParser.NL + params + ConditionParser.NL + StringUtils.repeat("  ", level) + ")";
         }
     }
 
@@ -61,10 +67,12 @@ public class ParserUtil {
         if (value == null) {
             return null;
         } else if (value instanceof String valueString) {
-            if (valueString.startsWith("$")) { // value set as variable
-                syntax += ((String) value).substring(1);
+            if (StringUtils.isEmpty(valueString)) {
+                return null;
+            } else if (valueString.startsWith("$")) { // value set as variable
+                syntax += valueString.substring(1);
             } else {
-                syntax += "\"" + value + "\""; // value set as string
+                syntax += "\"" + StringEscapeUtils.escapeJava(valueString) + "\""; // value set as string
             }
         } else {
             syntax += value;
@@ -85,7 +93,22 @@ public class ParserUtil {
         try {
             Template template = configuration.getTemplate(fragmentName);
             StringWriter writer = new StringWriter();
-            template.process(step.parameters(), writer);
+            Map<String, Object> filteredParams = new HashMap<>();
+            if (step.parameters() != null) {
+                for (Map.Entry<String, Object> val : step.parameters().entrySet()) {
+                    if (val.getValue() instanceof String s) {
+                        if (StringUtils.isBlank(s)) {
+                        } else if (s.startsWith("$")) {
+                            filteredParams.put(val.getKey(), s.substring(1));
+                        } else {
+                            filteredParams.put(val.getKey(), "\"" + s + "\"");
+                        }
+                    } else {
+                        filteredParams.put(val.getKey(), val.getValue());
+                    }
+                }
+            }
+            template.process(filteredParams, writer);
             writer.close();
             return writer.toString();
         } catch (TemplateNotFoundException e) {

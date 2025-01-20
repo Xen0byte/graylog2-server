@@ -47,7 +47,6 @@ const comp = ({
                  onCancel={mockCancel}
                  onSelect={mockSelect}
                  onUpdate={mockUpdate}
-                 previousOutputPresent={false}
                  options={options}
                  selectedBlockDict={selectedBlockDict}
                  existingBlock={existingBlock}
@@ -57,13 +56,13 @@ const comp = ({
 
 describe('RuleBlockForm', () => {
   afterEach(() => {
-    jest.resetAllMocks();
+    jest.clearAllMocks();
   });
 
   it('renders a select with all functions as options', async () => {
     render(comp());
 
-    const select = screen.getByRole('combobox');
+    const select = await screen.findByRole('combobox');
 
     await selectEvent.openMenu(select);
 
@@ -73,7 +72,7 @@ describe('RuleBlockForm', () => {
   it('calls onSelect handler when selecting an option', async () => {
     render(comp());
 
-    const select = screen.getByRole('combobox');
+    const select = await screen.findByRole('combobox');
 
     await selectEvent.openMenu(select);
     await selectEvent.select(select, 'set_field');
@@ -84,10 +83,9 @@ describe('RuleBlockForm', () => {
   it('shows function form and adds a block when an option is selected', async () => {
     render(comp({ selectedBlockDict: actionsBlockDict[0] }));
 
-    expect(screen.getByRole('heading', { name: 'Add action' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'has_field' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /has field/i })).toBeInTheDocument();
 
-    const submitButton = await screen.findByRole('button', { name: 'Add' });
+    const submitButton = await screen.findByRole('button', { name: /add/i });
 
     const fieldInput = screen.getByLabelText('field');
     fireEvent.change(fieldInput, { target: { value: 'bar' } });
@@ -97,10 +95,49 @@ describe('RuleBlockForm', () => {
     await waitFor(() => expect(mockAdd).toHaveBeenCalledWith({ field: 'bar', message: undefined }));
   });
 
+  it('continues to show function form and does not add the block when a required field is missing', async () => {
+    render(comp({ selectedBlockDict: actionsBlockDict[0] }));
+
+    expect(screen.getByRole('heading', { name: /has field/i })).toBeInTheDocument();
+
+    const submitButton = await screen.findByRole('button', { name: /add/i });
+
+    const requiredField = screen.getByLabelText('field');
+
+    fireEvent.click(submitButton);
+
+    expect(mockAdd).not.toHaveBeenCalled();
+
+    expect(requiredField).toBeInTheDocument();
+  });
+
+  it('marks optional fields', async () => {
+    render(comp({ selectedBlockDict: actionsBlockDict[4] }));
+
+    expect(screen.getByRole('heading', { name: /get substring/i })).toBeInTheDocument();
+
+    const optionalField = screen.getByText('indexEnd');
+
+    expect(optionalField).toBeInTheDocument();
+    expect(screen.getByText(/\(Opt\.\)/i)).toBeInTheDocument();
+  });
+
+  it('shows a help icon with function syntax help', async () => {
+    render(comp({ selectedBlockDict: actionsBlockDict[4] }));
+
+    expect(screen.getByRole('heading', { name: /get substring/i })).toBeInTheDocument();
+
+    const helpIcon = screen.getByTestId('funcSyntaxHelpIcon');
+
+    fireEvent.click(helpIcon);
+
+    await screen.findByText('Function Syntax Help');
+  });
+
   it('does not add a new block and calls onCancel handler when clicking cancel button', async () => {
     render(comp({ selectedBlockDict: actionsBlockDict[0] }));
 
-    const cancelButton = await screen.findByRole('button', { name: 'Cancel' });
+    const cancelButton = await screen.findByRole('button', { name: /cancel/i });
 
     const fieldInput = screen.getByLabelText('field');
     fireEvent.change(fieldInput, { target: { value: 'bar' } });
@@ -115,10 +152,9 @@ describe('RuleBlockForm', () => {
   it('shows and updates function form when a block is present', async () => {
     render(comp({ existingBlock: block, selectedBlockDict: actionsBlockDict[4] }));
 
-    expect(screen.getByRole('heading', { name: 'Edit action' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'substring "wingardium leviosa" start "1" end "2"' })).toBeInTheDocument();
+    await screen.findByRole('heading', { name: /substring "wingardium leviosa" start "1" end "2"/i });
 
-    const updateButton = await screen.findByRole('button', { name: 'Update' });
+    const updateButton = await screen.findByRole('button', { name: /update/i });
 
     const fieldInput = screen.getByLabelText('value');
     fireEvent.change(fieldInput, { target: { value: 'Lumos' } });

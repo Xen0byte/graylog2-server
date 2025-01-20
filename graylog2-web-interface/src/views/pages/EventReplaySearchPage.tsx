@@ -21,28 +21,10 @@ import useParams from 'routing/useParams';
 import useEventById from 'hooks/useEventById';
 import useEventDefinition from 'hooks/useEventDefinition';
 import { Spinner } from 'components/common';
-import SearchPage from 'views/pages/SearchPage';
 import { EventNotificationsActions } from 'stores/event-notifications/EventNotificationsStore';
-import useCreateViewForEvent from 'views/logic/views/UseCreateViewForEvent';
-import useAlertAndEventDefinitionData from 'hooks/useAlertAndEventDefinitionData';
-import EventInfoBar from 'components/event-definitions/replay-search/EventInfoBar';
 import { createFromFetchError } from 'logic/errors/ReportedErrors';
 import ErrorsActions from 'actions/errors/ErrorsActions';
-import useCreateSearch from 'views/hooks/useCreateSearch';
-
-const EventView = () => {
-  const { eventData, eventDefinition, aggregations } = useAlertAndEventDefinitionData();
-  const _view = useCreateViewForEvent({ eventData, eventDefinition, aggregations });
-  const view = useCreateSearch(_view);
-
-  return (
-    <SearchPage view={view}
-                isNew
-                SearchComponentSlots={{
-                  InfoBarSlot: EventInfoBar,
-                }} />
-  );
-};
+import ReplaySearch from 'components/events/ReplaySearch';
 
 export const onErrorHandler = (error) => {
   if (error.status === 404) {
@@ -52,7 +34,7 @@ export const onErrorHandler = (error) => {
 
 const EventReplaySearchPage = () => {
   const [isNotificationLoaded, setIsNotificationLoaded] = useState(false);
-  const { alertId } = useParams<{ alertId?: string }>();
+  const { alertId, definitionId } = useParams<{ alertId?: string, definitionId?: string }>();
   const { data: eventData, isLoading: eventIsLoading, isFetched: eventIsFetched } = useEventById(alertId, { onErrorHandler });
   const { isLoading: EDIsLoading, isFetched: EDIsFetched } = useEventDefinition(eventData?.event_definition_id);
 
@@ -62,7 +44,9 @@ const EventReplaySearchPage = () => {
 
   const isLoading = eventIsLoading || EDIsLoading || !eventIsFetched || !EDIsFetched || !isNotificationLoaded;
 
-  return isLoading ? <Spinner /> : <EventView />;
+  return isLoading
+    ? <Spinner />
+    : <ReplaySearch alertId={alertId} definitionId={definitionId} />;
 };
 
 export default EventReplaySearchPage;

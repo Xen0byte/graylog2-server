@@ -17,19 +17,17 @@
 import * as React from 'react';
 
 import type { IconName } from 'components/common/Icon';
+import ViewsHighlightingRules from 'views/components/sidebar/highlighting/ViewsHighlightingRules';
 
 import ViewDescription from './description/ViewDescription';
 import AddWidgetButton from './create/AddWidgetButton';
-import HighlightingRules from './highlighting/HighlightingRules';
 
 export type SidebarSectionProps = {
   sidebarChildren: React.ReactElement,
   sidebarIsPinned: boolean,
-  queryId: string,
   results: any,
   toggleSidebar: () => void
 };
-/* eslint-enable react/no-unused-prop-types */
 
 export type SidebarSection = {
   key: string,
@@ -47,7 +45,7 @@ const sidebarSections: Array<SidebarSection> = [
   },
   {
     key: 'create',
-    icon: 'plus',
+    icon: 'add',
     title: 'Create',
     content: ({ toggleSidebar, sidebarIsPinned }: SidebarSectionProps) => (
       <AddWidgetButton onClick={!sidebarIsPinned ? toggleSidebar : () => {}} />
@@ -55,9 +53,9 @@ const sidebarSections: Array<SidebarSection> = [
   },
   {
     key: 'highlighting',
-    icon: 'paragraph',
+    icon: 'format_paragraph',
     title: 'Highlighting',
-    content: () => <HighlightingRules />,
+    content: () => <ViewsHighlightingRules />,
   },
   {
     key: 'fieldList',

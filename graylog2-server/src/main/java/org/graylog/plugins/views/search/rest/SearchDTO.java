@@ -48,6 +48,9 @@ public abstract class SearchDTO {
     @JsonProperty
     public abstract Set<Parameter> parameters();
 
+    @JsonProperty
+    public abstract boolean skipNoStreamsCheck();
+
     static SearchDTO fromSearch(Search search) {
         return SearchDTO.Builder.create()
                 .id(search.id())
@@ -80,17 +83,21 @@ public abstract class SearchDTO {
         @JsonProperty
         public abstract Builder parameters(Set<Parameter> parameters);
 
+        @JsonProperty
+        public abstract Builder skipNoStreamsCheck(boolean skipNoStreamsCheck);
+
         public abstract SearchDTO build();
 
         @JsonCreator
         static Builder create() {
             return new AutoValue_SearchDTO.Builder()
                     .queries(new LinkedHashSet<>())
-                    .parameters(of());
+                    .parameters(of())
+                    .skipNoStreamsCheck(false);
         }
     }
 
-    Search toSearch() {
+    public Search toSearch() {
         final ImmutableSet<Query> queries = queries().stream()
                 .map(QueryDTO::toQuery)
                 .collect(ImmutableSet.toImmutableSet());
@@ -98,6 +105,7 @@ public abstract class SearchDTO {
                 .id(id())
                 .queries(queries)
                 .parameters(ImmutableSet.copyOf(parameters()))
+                .skipNoStreamsCheck(skipNoStreamsCheck())
                 .build();
     }
 }

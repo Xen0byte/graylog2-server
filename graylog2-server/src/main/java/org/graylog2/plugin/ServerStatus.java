@@ -19,6 +19,10 @@ package org.graylog2.plugin;
 import com.google.common.collect.Sets;
 import com.google.common.eventbus.EventBus;
 import com.google.common.util.concurrent.Uninterruptibles;
+import jakarta.inject.Inject;
+import jakarta.inject.Provider;
+import jakarta.inject.Singleton;
+import org.graylog2.GraylogNodeConfiguration;
 import org.graylog2.audit.AuditActor;
 import org.graylog2.audit.AuditEventSender;
 import org.graylog2.cluster.leader.LeaderElectionService;
@@ -30,9 +34,6 @@ import org.joda.time.DateTimeZone;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.inject.Inject;
-import javax.inject.Provider;
-import javax.inject.Singleton;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -75,7 +76,7 @@ public class ServerStatus {
     private volatile Lifecycle lifecycle = Lifecycle.UNINITIALIZED;
 
     @Inject
-    public ServerStatus(BaseConfiguration configuration, Set<Capability> capabilities, EventBus eventBus, Provider<AuditEventSender> auditEventSenderProvider, final NodeId nodeId) {
+    public ServerStatus(GraylogNodeConfiguration configuration, Set<Capability> capabilities, EventBus eventBus, Provider<AuditEventSender> auditEventSenderProvider, final NodeId nodeId) {
         this.eventBus = eventBus;
         this.nodeId = nodeId;
         this.auditEventSenderProvider = auditEventSenderProvider;
@@ -160,6 +161,7 @@ public class ServerStatus {
      * Blocks until the server enters the RUNNING state and then executes the given Runnable.
      * <p>
      * <b>This method is not interruptible while waiting for the server to enter the RUNNING state.</b>
+     *
      * @deprecated Preferably use {@link #awaitRunning()} instead, which is interruptible.
      */
     @Deprecated
@@ -178,8 +180,9 @@ public class ServerStatus {
 
     /**
      * Blocks until the server enters the RUNNING state.
+     *
      * @throws InterruptedException if the thread is interrupted while waiting for the server to enter the RUNNING
-     * state.
+     *                              state.
      */
     public void awaitRunning() throws InterruptedException {
         runningLatch.await();

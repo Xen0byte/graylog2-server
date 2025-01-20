@@ -17,17 +17,18 @@
 package org.graylog.plugins.pipelineprocessor.rulebuilder.parser;
 
 import freemarker.template.Configuration;
+import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 import org.graylog.plugins.pipelineprocessor.ast.functions.FunctionDescriptor;
 import org.graylog.plugins.pipelineprocessor.rulebuilder.RuleBuilderRegistry;
 import org.graylog.plugins.pipelineprocessor.rulebuilder.RuleBuilderStep;
 import org.graylog.plugins.pipelineprocessor.rulebuilder.db.RuleFragment;
 import org.graylog2.bindings.providers.SecureFreemarkerConfigProvider;
 
-import javax.inject.Inject;
-import javax.inject.Singleton;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 @Singleton
@@ -40,7 +41,7 @@ public class ActionParser {
 
     @Inject
     public ActionParser(RuleBuilderRegistry ruleBuilderRegistry, SecureFreemarkerConfigProvider secureFreemarkerConfigProvider) {
-        this.actions = ruleBuilderRegistry.actions();
+        this.actions = ruleBuilderRegistry.actionsWithInternal();
         this.freemarkerConfiguration = ParserUtil.initializeFragmentTemplates(secureFreemarkerConfigProvider, actions);
     }
 
@@ -49,10 +50,11 @@ public class ActionParser {
     }
 
     public String generate(List<RuleBuilderStep> actions, boolean generateSimulatorFields) {
-        return actions.stream().map(s -> generateAction(s, generateSimulatorFields)).collect(Collectors.joining(NL));
+        AtomicInteger index = new AtomicInteger(1);
+        return actions.stream().map(s -> generateAction(s, generateSimulatorFields, index.getAndIncrement())).collect(Collectors.joining(NL));
     }
 
-    String generateAction(RuleBuilderStep step, boolean generateSimulatorFields) {
+    String generateAction(RuleBuilderStep step, boolean generateSimulatorFields, int index) {
         final RuleFragment ruleFragment = actions.get(step.function());
         if (Objects.isNull(ruleFragment)) {
             return "";
@@ -78,18 +80,25 @@ public class ActionParser {
         // set output variable to fragment output variable
         if (ruleFragment.isFragment() && Objects.nonNull(ruleFragment.fragmentOutputVariable())
                 && Objects.nonNull(step.outputvariable())) {
-            syntax += "let " + step.outputvariable() + " = " +
+            syntax += NL + "  let " + step.outputvariable() + " = " +
                     ((ruleFragment.isFragment() && step.negate()) ? "! " : "") +
-                    ruleFragment.fragmentOutputVariable();
+                    ruleFragment.fragmentOutputVariable() + ";";
         }
 
         // generate message fields for simulator
         if (generateSimulatorFields && Objects.nonNull(step.outputvariable())) {
             syntax += NL;
-            syntax += "  set_field(\"gl2_simulator_" + step.outputvariable() + "\", " + step.outputvariable() + ");";
+            syntax += "  set_field(\"gl2_simulator_step_" + index + "_" + step.outputvariable() + "\", " + cloneVarIfNecessary(step.outputvariable(), function.returnType()) + ");";
         }
 
         return syntax;
+    }
+
+    private String cloneVarIfNecessary(String outputvariable, Class<?> returnType) {
+        if (returnType == Map.class) {
+            return "map_copy(" + outputvariable + ")";
+        }
+        return outputvariable;
     }
 
 }

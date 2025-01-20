@@ -79,8 +79,10 @@ public abstract class MongoLockServiceTest {
 
     @Test
     void alreadyTaken(MongoDBTestService mongodb) {
-        new MongoLockService(otherNodeId, mongodb.mongoConnection(), MongoLockService.MIN_LOCK_TTL).lock("test-resource", null)
-                .orElseThrow(() -> new IllegalStateException("Unable to create original lock."));
+        if (new MongoLockService(otherNodeId, mongodb.mongoConnection(), MongoLockService.MIN_LOCK_TTL)
+                .lock("test-resource", null).isEmpty()) {
+            throw new IllegalStateException("Unable to create original lock.");
+        }
 
         final Optional<Lock> lock = lockService.lock("test-resource", null);
 
@@ -138,7 +140,7 @@ public abstract class MongoLockServiceTest {
             final Set<String> keySet = doc.get("key", Document.class).keySet();
             if (keySet.contains(FIELD_UPDATED_AT)) {
                 final long expireAfterSeconds = doc.get("expireAfterSeconds", Number.class).longValue();
-                if (Objects.equals(expireAfterSeconds, Duration.ofSeconds(72).getSeconds())) {
+                if (Objects.equals(expireAfterSeconds, Duration.ofSeconds(72).toSeconds())) {
                     found = true;
                 }
             }

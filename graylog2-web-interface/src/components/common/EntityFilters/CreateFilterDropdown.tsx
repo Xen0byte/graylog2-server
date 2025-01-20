@@ -18,7 +18,7 @@ import React, { useState } from 'react';
 import styled from 'styled-components';
 
 import OverlayDropdownButton from 'components/common/OverlayDropdownButton';
-import MenuItem from 'components/bootstrap/MenuItem';
+import { MenuItem } from 'components/bootstrap';
 import { HoverForHelp, Icon } from 'components/common';
 import type { Attributes } from 'stores/PaginationTypes';
 import type { Filters, Filter } from 'components/common/EntityFilters/types';
@@ -40,7 +40,7 @@ const AttributeSelect = ({
   <>
     <MenuItem header>Create Filter</MenuItem>
     {attributes.map(({ id, title, type }) => {
-      const hasActiveFilter = !!activeFilters?.[id]?.length;
+      const hasActiveFilter = !!activeFilters?.get(id)?.length;
       const disabled = type === 'BOOLEAN' ? hasActiveFilter : false;
 
       return (
@@ -74,13 +74,12 @@ const CreateFilterDropdown = ({ filterableAttributes, filterValueRenderers, onCr
 
   return (
     <Container>
-      <OverlayDropdownButton title={<Icon name="plus" />}
+      <OverlayDropdownButton title={<Icon name="add" />}
                              bsSize="small"
                              buttonTitle="Create Filter"
                              onToggle={onToggleDropdown}
                              closeOnSelect={false}
-                             dropdownMinWidth={120}
-                             dropdownZIndex={1000}>
+                             dropdownZIndex={1050}>
         {({ toggleDropdown }) => {
           const _onCreateFilter = (filter: { title: string, value: string }, closeDropdown = true) => {
             if (closeDropdown) {

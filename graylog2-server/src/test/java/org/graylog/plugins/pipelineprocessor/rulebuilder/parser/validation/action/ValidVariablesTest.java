@@ -68,7 +68,7 @@ class ValidVariablesTest {
         actions.put(INTEGER_FUNCTION, RuleFragment.builder().descriptor(integerFunction.descriptor()).build());
         actions.put(VOID_FUNCTION, RuleFragment.builder().descriptor(voidFunction.descriptor()).build());
 
-        when(ruleBuilderRegistry.actions()).thenReturn(actions);
+        when(ruleBuilderRegistry.actionsWithInternal()).thenReturn(actions);
 
         classUnderTest = new ValidVariables(ruleBuilderRegistry);
     }
@@ -103,7 +103,7 @@ class ValidVariablesTest {
         ValidationResult result = classUnderTest.validate(stepWithValidNegation);
 
         assertThat(result.failed()).isTrue();
-        assertThat(result.failureReason()).isEqualTo("Return typ is void. No out put variable allowed");
+        assertThat(result.failureReason()).isEqualTo("Return type is void. No output variable allowed");
     }
 
     @Test

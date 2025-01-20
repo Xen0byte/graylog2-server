@@ -17,13 +17,14 @@
 package org.graylog.plugins.pipelineprocessor.rulebuilder;
 
 import com.google.common.collect.Streams;
+import jakarta.inject.Inject;
+import org.graylog.plugins.pipelineprocessor.ast.functions.Function;
 import org.graylog.plugins.pipelineprocessor.parser.FunctionRegistry;
 import org.graylog.plugins.pipelineprocessor.rulebuilder.db.RuleFragment;
 import org.graylog.plugins.pipelineprocessor.rulebuilder.db.RuleFragmentService;
 
-import javax.inject.Inject;
+import java.util.Collection;
 import java.util.Map;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -39,8 +40,27 @@ public class RuleBuilderRegistry {
         this.ruleFragmentService = ruleFragmentService;
     }
 
+    /**
+     * Returns a map of function conditions that are available for users to use in the rule builder.
+     *
+     * @return map of condition functions
+     */
     public Map<String, RuleFragment> conditions() {
-        final Stream<RuleFragment> functionConditions = functionRegistry.all()
+        return collectConditions(functionRegistry.all());
+    }
+
+    /**
+     * Returns a map of function conditions that includes internal functions. These conditions must not be exposed
+     * to users!
+     *
+     * @return map of condition functions
+     */
+    public Map<String, RuleFragment> conditionsWithInternal() {
+        return collectConditions(functionRegistry.allWithInternal());
+    }
+
+    private Map<String, RuleFragment> collectConditions(Collection<Function<?>> functions) {
+        final Stream<RuleFragment> functionConditions = functions
                 .stream()
                 .filter(f -> f.descriptor().ruleBuilderEnabled()
                         && f.descriptor().returnType().equals(Boolean.class))
@@ -48,22 +68,44 @@ public class RuleBuilderRegistry {
                         .descriptor(f.descriptor())
                         .build()
                 );
-        final Stream<RuleFragment> fragmentConditions = ruleFragmentService.all().stream().filter(RuleFragment::isCondition);
+        final Stream<RuleFragment> fragmentConditions = ruleFragmentService.all().stream()
+                .filter(f -> f.descriptor().ruleBuilderEnabled() && f.isCondition());
         return Streams.concat(functionConditions, fragmentConditions)
                 .collect(Collectors.toMap(f -> f.descriptor().name(), function -> function));
     }
 
+    /**
+     * Returns a map of function actions that are available for users to use in the rule builder.
+     *
+     * @return map of action functions
+     */
     public Map<String, RuleFragment> actions() {
-        final Stream<RuleFragment> functions = functionRegistry.all()
+        return collectActions(functionRegistry.all());
+    }
+
+    /**
+     * Returns a map of function actions that includes internal functions. These actions must not be exposed
+     * to users!
+     *
+     * @return map of action functions
+     */
+    public Map<String, RuleFragment> actionsWithInternal() {
+        return collectActions(functionRegistry.allWithInternal());
+    }
+
+    public Map<String, RuleFragment> collectActions(Collection<Function<?>> functions) {
+        final Stream<RuleFragment> functionActions = functions
                 .stream()
-                .filter(f -> f.descriptor().ruleBuilderEnabled())
+                .filter(f -> f.descriptor().ruleBuilderEnabled()
+                        && !f.descriptor().returnType().equals(Boolean.class))
                 .map(f -> RuleFragment.builder()
                         .descriptor(f.descriptor())
                         .build()
                 );
         final Stream<RuleFragment> fragmentActions =
-                ruleFragmentService.all().stream().filter(Predicate.not(RuleFragment::isCondition));
-        return Streams.concat(functions, fragmentActions)
+                ruleFragmentService.all().stream()
+                        .filter(f -> f.descriptor().ruleBuilderEnabled() && !f.isCondition());
+        return Streams.concat(functionActions, fragmentActions)
                 .collect(Collectors.toMap(f -> f.descriptor().name(), function -> function));
     }
 
